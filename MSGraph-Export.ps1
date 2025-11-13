@@ -1,9 +1,10 @@
-##################################################
-#
-## Intune Endpoint Security Exporter
-##  - Common helpers + Graph bootstrap + Export
-#
-##################################################
+#======================================================================================#
+#                                                                                      #
+#                         Intune Endpoint Security Exporter                            #
+## This script will export almost all policies from Intune and place them in a folder ##
+#                                                                                      #
+##                Script Created by Andreas Daneville 13-11-2025                       #
+#======================================================================================#
 
 [CmdletBinding()]
 param(
@@ -37,17 +38,22 @@ if (-not $ExportRootPath) {
 # Config: Folders & Scopes
 # =========================
 
-# Folder names (your 1–6 + 9 structure)
+# Folder names (your 1–11 + 99 structure)
 $FolderMap = @{
     SecurityBaselines   = '1. Security Baselines'
     Antivirus           = '2. Antivirus'
     DiskEncryption      = '3. Disk Encryption'
     Firewall            = '4. Firewall'
-    ASR                 = '5. Attack surface reduction'
-    AccountProtection   = '6. Account protection'
-    ConditionalAccess   = '9. Conditional Access'
-    Other               = '99. Uncategorized'   # optional catch-all
+    EPM                 = '5. Endpoint Privilege Management'
+    EDR                 = '6. Endpoint Detection and Response'
+    AppControl          = '7. App Control for Business'
+    ASR                 = '8. Attack surface reduction'
+    AccountProtection   = '9. Account protection'
+    DeviceCompliance    = '10. Device Compliance'
+    ConditionalAccess   = '11. Conditional Access'
+    Other               = '99. Uncategorized'
 }
+
 
 # Graph scopes
 $RequiredScopes = @(
@@ -217,13 +223,17 @@ function Get-PolicyFolderForTemplate {
     # Prefer explicit templateFamily when present
     if ($TemplateFamily) {
         switch ($TemplateFamily) {
-            'endpointSecurityAntivirus'               { return $FolderMap.Antivirus }
-            'endpointSecurityDiskEncryption'          { return $FolderMap.DiskEncryption }
-            'endpointSecurityFirewall'                { return $FolderMap.Firewall }
-            'endpointSecurityAttackSurfaceReduction'  { return $FolderMap.ASR }
-            'endpointSecurityAccountProtection'       { return $FolderMap.AccountProtection }
-            'baseline'                                { return $FolderMap.SecurityBaselines }
-            default                                   { return $FolderMap.Other }
+            'endpointSecurityAntivirus'                  { return $FolderMap.Antivirus }
+            'endpointSecurityDiskEncryption'             { return $FolderMap.DiskEncryption }
+            'endpointSecurityFirewall'                   { return $FolderMap.Firewall }
+            'endpointSecurityEndpointPrivilegeManagement'{ return $FolderMap.EPM }
+            'endpointSecurityEndpointDetectionAndResponse'{ return $FolderMap.EDR }
+            'endpointSecurityApplicationControl'         { return $FolderMap.AppControl }
+            'endpointSecurityAttackSurfaceReduction'     { return $FolderMap.ASR }
+            'endpointSecurityAttackSurfaceReductionRules'{ return $FolderMap.ASR } # extra safety
+            'endpointSecurityAccountProtection'          { return $FolderMap.AccountProtection }
+            'baseline'                                   { return $FolderMap.SecurityBaselines }
+            default                                      { return $FolderMap.Other }
         }
     }
 
@@ -243,6 +253,15 @@ function Get-PolicyFolderForTemplate {
         elseif ($name -like '*firewall*') {
             return $FolderMap.Firewall
         }
+        elseif ($name -like '*endpoint privilege management*' -or $name -like '*epm*') {
+            return $FolderMap.EPM
+        }
+        elseif ($name -like '*endpoint detection and response*' -or $name -like '*edr*') {
+            return $FolderMap.EDR
+        }
+        elseif ($name -like '*app control for business*' -or $name -like '*app control*') {
+            return $FolderMap.AppControl
+        }
         elseif ($name -like '*attack surface reduction*' -or $name -like '*asr*') {
             return $FolderMap.ASR
         }
@@ -253,6 +272,7 @@ function Get-PolicyFolderForTemplate {
 
     return $FolderMap.Other
 }
+
 
 
 # =========================
@@ -311,6 +331,60 @@ function Export-ConditionalAccessPolicies {
 
 
 # =========================
+# Device Compliance helpers
+# =========================
+
+function Get-DeviceCompliancePolicies {
+    <#
+    .SYNOPSIS
+    Gets all Device Compliance policies.
+    Graph: GET /deviceManagement/deviceCompliancePolicies
+    #>
+    [CmdletBinding()]
+    param()
+
+    $resource = 'deviceManagement/deviceCompliancePolicies'
+    (Invoke-GraphGet -RelativeUri $resource).value
+}
+
+function Export-DeviceCompliancePolicies {
+    <#
+    .SYNOPSIS
+    Exports all Device Compliance policies to the Device Compliance folder.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RootPath
+    )
+
+    Write-Host "Fetching Device Compliance policies..." -ForegroundColor Cyan
+    $policies = Get-DeviceCompliancePolicies
+    Write-Host "Device Compliance policies returned: $($policies.Count)" -ForegroundColor DarkGray
+
+    if (-not $policies -or $policies.Count -eq 0) {
+        Write-Host "No Device Compliance policies found. Nothing to export." -ForegroundColor Yellow
+        return
+    }
+
+    $dcFolderName = $FolderMap.DeviceCompliance
+    if (-not $dcFolderName) {
+        $dcFolderName = '10. Device Compliance'
+    }
+
+    $exportPath = Join-Path $RootPath $dcFolderName
+    if (-not (Test-Path -LiteralPath $exportPath)) {
+        Write-Host "Creating Device Compliance export folder: $exportPath" -ForegroundColor DarkCyan
+        New-Item -ItemType Directory -Path $exportPath -Force | Out-Null
+    }
+
+    foreach ($policy in $policies) {
+        Write-Host "Device Compliance Policy: $($policy.displayName)" -ForegroundColor Yellow
+        Export-JsonData -Json $policy -ExportPath $exportPath
+    }
+}
+
+
+# =========================
 # Main orchestrator
 # =========================
 
@@ -360,18 +434,20 @@ function Export-IntuneEndpointSecurityPolicies {
         return
     }
 
-    # Which template families we care about (your 1–6 buckets)
+    # Which template families we care about (your 1–9 buckets from Endpoint Security/Baselines)
     $endpointFamilies = @(
-        'endpointSecurityAntivirus',
-        'endpointSecurityDiskEncryption',
-        'endpointSecurityFirewall',
-        'endpointSecurityAttackSurfaceReduction',
-        'endpointSecurityAccountProtection',
-        'baseline'   # Security baselines
+        'endpointSecurityAntivirus',                     # 2 (AntiVirus)
+        'endpointSecurityDiskEncryption',                # 3 (BitLocker)
+        'endpointSecurityFirewall',                      # 4 (Firewall)
+        'endpointSecurityEndpointPrivilegeManagement',   # 5 (EPM)
+        'endpointSecurityEndpointDetectionAndResponse',  # 6 (EDR)
+        'endpointSecurityApplicationControl',            # 7 (App Control)
+        'endpointSecurityAttackSurfaceReduction',        # 8 (ASR)
+        'endpointSecurityAttackSurfaceReductionRules',   # 8 (ASR variant)
+        'endpointSecurityAccountProtection',             # 9 (Account Protection)
+        'baseline'                                       # 1 (Security baselines)
     )
-
-
-
+    
     # Filter to Endpoint Security + baselines
     $policies = $allPolicies | Where-Object {
         $_.templateReference -and
@@ -385,7 +461,7 @@ function Export-IntuneEndpointSecurityPolicies {
         return
     }
 
-    # 5) Export each policy
+    # 5) Export each Endpoint Security / Baseline policy
     foreach ($policy in $policies) {
 
         $policyId      = $policy.id
@@ -411,22 +487,20 @@ function Export-IntuneEndpointSecurityPolicies {
 
         # 5b) Build export object
         $json = [PSCustomObject]@{
-            # For compatibility with old logic & filenames
-            displayName         = $name
-            name                = $name
-            description         = $description
-            platforms           = $platforms
-            technologies        = $technologies
-            roleScopeTagIds     = $roleScopeTags
+            displayName             = $name
+            name                    = $name
+            description             = $description
+            platforms               = $platforms
+            technologies            = $technologies
+            roleScopeTagIds         = $roleScopeTags
 
-            TemplateFamily      = $templateFamily
-            TemplateDisplayName = $templateDisplayName
-            TemplateId          = $templateId
-            TemplateDisplayVersion = $templateDisplayVer
+            TemplateFamily          = $templateFamily
+            TemplateDisplayName     = $templateDisplayName
+            TemplateId              = $templateId
+            TemplateDisplayVersion  = $templateDisplayVer
 
-            # Flatten templateReference + settings into one object
-            templateReference   = $tmplRef
-            settings            = $settings
+            templateReference       = $tmplRef
+            settings                = $settings
         }
 
         # 5c) Decide export subfolder based on template family/name
@@ -436,12 +510,16 @@ function Export-IntuneEndpointSecurityPolicies {
         Export-JsonData -Json $json -ExportPath $exportPath
     }
 
-    # 6) Export Conditional Access policies into folder 9
+    # 6) Export Device Compliance policies into folder 10
+    Export-DeviceCompliancePolicies -RootPath $RootPath
+
+    # 7) Export Conditional Access policies into folder 11
     Export-ConditionalAccessPolicies -RootPath $RootPath
-    
+
     Write-Host ""
     Write-Host "Export complete." -ForegroundColor Cyan
 }
+
 
 #########################################
 ### BootStrapper
