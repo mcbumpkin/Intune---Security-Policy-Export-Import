@@ -3,7 +3,7 @@
 #                         Intune Endpoint Security Exporter                            #
 ## This script will export almost all policies from Intune and place them in a folder ##
 #                                                                                      #
-##                Script Created by Andreas Daneville 13-11-2025                       #
+#                 Script Created by Andreas Daneville 13-11-2025                       #
 #======================================================================================#
 
 [CmdletBinding()]
@@ -272,7 +272,6 @@ function Get-PolicyFolderForTemplate {
 
     return $FolderMap.Other
 }
-
 
 
 # =========================
