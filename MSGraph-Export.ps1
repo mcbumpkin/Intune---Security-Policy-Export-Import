@@ -12,6 +12,7 @@ param(
     [switch]$UseDeviceCode
 )
 
+
 # =========================
 # Resolve ExportRootPath
 # =========================
@@ -31,27 +32,32 @@ if (-not $ExportRootPath) {
     }
 }
 
+
 # =========================
 # Config: Folders & Scopes
 # =========================
 
-# Folder names (your 1–5 structure)
+# Folder names (your 1–6 + 9 structure)
 $FolderMap = @{
-    SecurityBaselines = '1. Security Baselines'
-    Antivirus         = '2. Antivirus'
-    DiskEncryption    = '3. Disk Encryption'
-    Firewall          = '4. Firewall'
-    ASR               = '5. Attack surface reduction'
-    Other             = '9. Uncategorized'
+    SecurityBaselines   = '1. Security Baselines'
+    Antivirus           = '2. Antivirus'
+    DiskEncryption      = '3. Disk Encryption'
+    Firewall            = '4. Firewall'
+    ASR                 = '5. Attack surface reduction'
+    AccountProtection   = '6. Account protection'
+    ConditionalAccess   = '9. Conditional Access'
+    Other               = '99. Uncategorized'   # optional catch-all
 }
 
 # Graph scopes
 $RequiredScopes = @(
     'DeviceManagementConfiguration.Read.All'
+    'Policy.Read.All'
 )
 
 # API version (Endpoint security is still mostly in /beta)
 $GraphApiVersion = 'beta'
+
 
 # =========================
 # Common helpers
@@ -164,6 +170,7 @@ function Export-JsonData {
     Write-Host "Exported: $fullPath" -ForegroundColor Green
 }
 
+
 # =========================
 # Intune helpers (new unified settings platform)
 # =========================
@@ -199,7 +206,7 @@ function Get-ConfigurationPolicySettings {
 function Get-PolicyFolderForTemplate {
     <#
     .SYNOPSIS
-    Maps a configuration policy (template family/display name) to one of your 1–5 folders.
+    Maps a configuration policy (template family/display name) to one of your folders.
     #>
     [CmdletBinding()]
     param(
@@ -207,19 +214,20 @@ function Get-PolicyFolderForTemplate {
         [string]$TemplateDisplayName
     )
 
-    # Prefer the explicit templateFamily when it exists
+    # Prefer explicit templateFamily when present
     if ($TemplateFamily) {
         switch ($TemplateFamily) {
-            'endpointSecurityAntivirus'                 { return $FolderMap.Antivirus }
-            'endpointSecurityDiskEncryption'           { return $FolderMap.DiskEncryption }
-            'endpointSecurityFirewall'                 { return $FolderMap.Firewall }
-            'endpointSecurityAttackSurfaceReduction'   { return $FolderMap.ASR }
-            'baseline'                                 { return $FolderMap.SecurityBaselines }
-            default                                    { return $FolderMap.Other }
+            'endpointSecurityAntivirus'               { return $FolderMap.Antivirus }
+            'endpointSecurityDiskEncryption'          { return $FolderMap.DiskEncryption }
+            'endpointSecurityFirewall'                { return $FolderMap.Firewall }
+            'endpointSecurityAttackSurfaceReduction'  { return $FolderMap.ASR }
+            'endpointSecurityAccountProtection'       { return $FolderMap.AccountProtection }
+            'baseline'                                { return $FolderMap.SecurityBaselines }
+            default                                   { return $FolderMap.Other }
         }
     }
 
-    # Fallback to fuzzy name matching if family is missing/none
+    # Fallback: fuzzy match on template name
     if ($TemplateDisplayName) {
         $name = $TemplateDisplayName.ToLowerInvariant()
 
@@ -238,9 +246,67 @@ function Get-PolicyFolderForTemplate {
         elseif ($name -like '*attack surface reduction*' -or $name -like '*asr*') {
             return $FolderMap.ASR
         }
+        elseif ($name -like '*account protection*') {
+            return $FolderMap.AccountProtection
+        }
     }
 
     return $FolderMap.Other
+}
+
+
+# =========================
+# Conditional Access helpers
+# =========================
+
+function Get-ConditionalAccessPolicies {
+    <#
+    .SYNOPSIS
+    Gets all Conditional Access policies.
+    Graph: GET /identity/conditionalAccess/policies
+    #>
+    [CmdletBinding()]
+    param()
+
+    $resource = 'identity/conditionalAccess/policies'
+    (Invoke-GraphGet -RelativeUri $resource).value
+}
+
+function Export-ConditionalAccessPolicies {
+    <#
+    .SYNOPSIS
+    Exports all Conditional Access policies to the Conditional Access folder.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RootPath
+    )
+
+    Write-Host "Fetching Conditional Access policies..." -ForegroundColor Cyan
+    $policies = Get-ConditionalAccessPolicies
+    Write-Host "Conditional Access policies returned: $($policies.Count)" -ForegroundColor DarkGray
+
+    if (-not $policies -or $policies.Count -eq 0) {
+        Write-Host "No Conditional Access policies found. Nothing to export." -ForegroundColor Yellow
+        return
+    }
+
+    $caFolderName = $FolderMap.ConditionalAccess
+    if (-not $caFolderName) {
+        $caFolderName = '9. Conditional Access'
+    }
+
+    $exportPath = Join-Path $RootPath $caFolderName
+    if (-not (Test-Path -LiteralPath $exportPath)) {
+        Write-Host "Creating Conditional Access export folder: $exportPath" -ForegroundColor DarkCyan
+        New-Item -ItemType Directory -Path $exportPath -Force | Out-Null
+    }
+
+    foreach ($policy in $policies) {
+        Write-Host "CA Policy: $($policy.displayName)" -ForegroundColor Yellow
+        # CA policies already have displayName at top level; Export-JsonData will name files correctly.
+        Export-JsonData -Json $policy -ExportPath $exportPath
+    }
 }
 
 
@@ -294,14 +360,17 @@ function Export-IntuneEndpointSecurityPolicies {
         return
     }
 
-    # Which template families we care about (your 1–5 buckets)
+    # Which template families we care about (your 1–6 buckets)
     $endpointFamilies = @(
         'endpointSecurityAntivirus',
         'endpointSecurityDiskEncryption',
         'endpointSecurityFirewall',
         'endpointSecurityAttackSurfaceReduction',
+        'endpointSecurityAccountProtection',
         'baseline'   # Security baselines
     )
+
+
 
     # Filter to Endpoint Security + baselines
     $policies = $allPolicies | Where-Object {
@@ -367,14 +436,15 @@ function Export-IntuneEndpointSecurityPolicies {
         Export-JsonData -Json $json -ExportPath $exportPath
     }
 
+    # 6) Export Conditional Access policies into folder 9
+    Export-ConditionalAccessPolicies -RootPath $RootPath
+    
     Write-Host ""
     Write-Host "Export complete." -ForegroundColor Cyan
 }
 
-
-
 #########################################
 ### BootStrapper
-
 Export-IntuneEndpointSecurityPolicies -RootPath $ExportRootPath -UseDeviceCode:$UseDeviceCode
+
 
