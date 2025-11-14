@@ -155,6 +155,25 @@ function Remove-ReadOnlyProperties {
 # Import: Baseline
 # =========================
 
+function New-ODataFilterEncoded {
+    <#
+      Builds a URL-encoded $filter expression with correct OData string quoting.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Property,
+        [Parameter(Mandatory)][string]$Value
+    )
+
+    # Escape single quotes for OData: ' -> ''
+    $escaped = $Value.Replace("'", "''")
+    $filter  = "$Property eq '$escaped'"
+
+    # URL-encode the whole filter expression (so & becomes %26 etc.)
+    return [System.Uri]::EscapeDataString($filter)
+}
+
+
 function Import-ConfigurationPolicyFromFile {
     [CmdletBinding()]
     param(
@@ -170,14 +189,45 @@ function Import-ConfigurationPolicyFromFile {
         return
     }
 
-    # Basic safety: don’t import if name already exists
-    $existing = Invoke-MgGraphRequest -Method GET -Uri "/$GraphApiVersion/deviceManagement/configurationPolicies?`$filter=name eq '$($obj.name)'" -ErrorAction SilentlyContinue
-    if ($existing.value -and $existing.value.Count -gt 0) {
-        Write-Host "  A configuration policy named '$($obj.name)' already exists. Skipping." -ForegroundColor Yellow
-        return
+    # Duplicate check by name (safe filter encoding)
+    try {
+        $filterEncoded = New-ODataFilterEncoded -Property 'name' -Value $obj.name
+        $existing = Invoke-MgGraphRequest -Method GET -Uri "/$GraphApiVersion/deviceManagement/configurationPolicies?`$filter=$filterEncoded" -ErrorAction Stop
+        if ($existing.value -and $existing.value.Count -gt 0) {
+            Write-Host "  A configuration policy named '$($obj.name)' already exists. Skipping." -ForegroundColor Yellow
+            return
+        }
+    }
+    catch {
+        Write-Host "  Warning: duplicate-check GET failed, continuing without name check. ($($_.Exception.Message))" -ForegroundColor DarkYellow
     }
 
-    # For config policies we actually WANT: name, description, platforms, technologies, roleScopeTagIds, templateReference, settings
+    # Template family (we stored this in the export object)
+    $templateFamily = $obj.TemplateFamily
+
+    # Default: use exported settings
+    $settings = $obj.settings
+
+    # Special case: EDR onboarding-from-connector setting is not importable
+    if ($templateFamily -eq 'endpointSecurityEndpointDetectionAndResponse') {
+        $beforeCount = @($settings).Count
+
+        $settings = @($settings | Where-Object {
+            # Try to catch problematic definition IDs.
+            $defId = $_.settingDefinitionId
+            if (-not $defId -and $_.definitionId) { $defId = $_.definitionId }
+
+            -not ($defId -like '*device_vendor_msft_windowsadvancedthreatprotection_onboarding_fromconnector*')
+        })
+
+        $afterCount = @($settings).Count
+
+        if ($beforeCount -ne $afterCount) {
+            Write-Host "  EDR: stripped $($beforeCount - $afterCount) onboarding-from-connector setting(s) that are not importable." -ForegroundColor DarkYellow
+        }
+    }
+
+    # Build body
     $body = [PSCustomObject]@{
         name              = $obj.name
         description       = $obj.description
@@ -185,11 +235,17 @@ function Import-ConfigurationPolicyFromFile {
         technologies      = $obj.technologies
         roleScopeTagIds   = $obj.roleScopeTagIds
         templateReference = $obj.templateReference
-        settings          = $obj.settings
+        settings          = $settings
     }
 
-    $created = Invoke-GraphPost -RelativeUri "deviceManagement/configurationPolicies" -BodyObject $body
-    Write-Host "  Created configuration policy '$($created.name)' (id: $($created.id))" -ForegroundColor Green
+    try {
+        $created = Invoke-GraphPost -RelativeUri "deviceManagement/configurationPolicies" -BodyObject $body
+        Write-Host "  Created configuration policy '$($created.name)' (id: $($created.id))" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "  FAILED to create configuration policy '$($obj.name)': $($_.Exception.Message)" -ForegroundColor Red
+        return
+    }
 }
 
 
@@ -207,22 +263,37 @@ function Import-DeviceCompliancePolicyFromFile {
 
     $obj = Get-JsonFromFile -Path $Path
 
-    # Guess policy type from @odata.type or other properties – v1 we’ll just treat as plain deviceCompliancePolicy JSON.
-    $safe = Remove-ReadOnlyProperties -Object $obj
+    # Strip read-only + problematic props
+    $safe = Remove-ReadOnlyProperties -Object $obj -Extra @(
+        'scheduledActionsForRule',  # let Intune create default block action
+        'assignments'               # cross-tenant assignments rarely portable
+    )
 
-    # Basic duplicate check by displayName
-    $existing = Invoke-MgGraphRequest -Method GET -Uri "/v1.0/deviceManagement/deviceCompliancePolicies?`$filter=displayName eq '$($safe.displayName)'" -ErrorAction SilentlyContinue
-    if ($existing.value -and $existing.value.Count -gt 0) {
-        Write-Host "  A Device Compliance policy named '$($safe.displayName)' already exists. Skipping." -ForegroundColor Yellow
-        return
+    # Duplicate check by displayName
+    try {
+        $filterEncoded = New-ODataFilterEncoded -Property 'displayName' -Value $safe.displayName
+        $existing = Invoke-MgGraphRequest -Method GET -Uri "/v1.0/deviceManagement/deviceCompliancePolicies?`$filter=$filterEncoded" -ErrorAction Stop
+        if ($existing.value -and $existing.value.Count -gt 0) {
+            Write-Host "  A Device Compliance policy named '$($safe.displayName)' already exists. Skipping." -ForegroundColor Yellow
+            return
+        }
+    }
+    catch {
+        Write-Host "  Warning: duplicate-check GET failed for compliance policy '$($safe.displayName)', continuing. ($($_.Exception.Message))" -ForegroundColor DarkYellow
     }
 
     # POST to /deviceManagement/deviceCompliancePolicies (v1.0)
     $uri = "/v1.0/deviceManagement/deviceCompliancePolicies"
     $bodyJson = $safe | ConvertTo-Json -Depth 20
-    $created = Invoke-MgGraphRequest -Method POST -Uri $uri -Body $bodyJson -ErrorAction Stop
 
-    Write-Host "  Created Device Compliance policy '$($created.displayName)' (id: $($created.id))" -ForegroundColor Green
+    try {
+        $created = Invoke-MgGraphRequest -Method POST -Uri $uri -Body $bodyJson -ErrorAction Stop
+        Write-Host "  Created Device Compliance policy '$($created.displayName)' (id: $($created.id))" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "  FAILED to create Device Compliance policy '$($safe.displayName)': $($_.Exception.Message)" -ForegroundColor Red
+        return
+    }
 }
 
 
@@ -238,21 +309,45 @@ function Import-ConditionalAccessPolicyFromFile {
 
     Write-Host "Importing Conditional Access policy from: $Path" -ForegroundColor Cyan
 
-    $obj  = Get-JsonFromFile -Path $Path
-    $safe = Remove-ReadOnlyProperties -Object $obj
+    $obj = Get-JsonFromFile -Path $Path
 
-    # Basic duplicate check by displayName
-    $existing = Invoke-MgGraphRequest -Method GET -Uri "/v1.0/identity/conditionalAccess/policies?`$filter=displayName eq '$($safe.displayName)'" -ErrorAction SilentlyContinue
-    if ($existing.value -and $existing.value.Count -gt 0) {
-        Write-Host "  A Conditional Access policy named '$($safe.displayName)' already exists. Skipping." -ForegroundColor Yellow
-        return
+    # Build a clean CA payload that matches the schema
+    $body = [PSCustomObject]@{
+        displayName      = $obj.displayName
+        state            = $obj.state
+        conditions       = $obj.conditions
+        grantControls    = $obj.grantControls
+        sessionControls  = $obj.sessionControls
+    }
+
+    if ($obj.PSObject.Properties.Name -contains 'description' -and $obj.description) {
+        $body | Add-Member -MemberType NoteProperty -Name 'description' -Value $obj.description
+    }
+
+    # Duplicate check by displayName
+    try {
+        $filterEncoded = New-ODataFilterEncoded -Property 'displayName' -Value $body.displayName
+        $existing = Invoke-MgGraphRequest -Method GET -Uri "/v1.0/identity/conditionalAccess/policies?`$filter=$filterEncoded" -ErrorAction Stop
+        if ($existing.value -and $existing.value.Count -gt 0) {
+            Write-Host "  A Conditional Access policy named '$($body.displayName)' already exists. Skipping." -ForegroundColor Yellow
+            return
+        }
+    }
+    catch {
+        Write-Host "  Warning: duplicate-check GET failed for CA policy '$($body.displayName)', continuing. ($($_.Exception.Message))" -ForegroundColor DarkYellow
     }
 
     $uri = "/v1.0/identity/conditionalAccess/policies"
-    $bodyJson = $safe | ConvertTo-Json -Depth 20
-    $created = Invoke-MgGraphRequest -Method POST -Uri $uri -Body $bodyJson -ErrorAction Stop
+    $bodyJson = $body | ConvertTo-Json -Depth 20
 
-    Write-Host "  Created Conditional Access policy '$($created.displayName)' (id: $($created.id))" -ForegroundColor Green
+    try {
+        $created = Invoke-MgGraphRequest -Method POST -Uri $uri -Body $bodyJson -ErrorAction Stop
+        Write-Host "  Created Conditional Access policy '$($created.displayName)' (id: $($created.id))" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "  FAILED to create Conditional Access policy '$($body.displayName)': $($_.Exception.Message)" -ForegroundColor Red
+        return
+    }
 }
 
 
@@ -323,6 +418,7 @@ function Import-IntuneSecurityFromExport {
     Write-Host ""
     Write-Host "Import run complete." -ForegroundColor Cyan
 }
+
 
 #########################################
 ### BootStrapper
