@@ -9,9 +9,48 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-#-------------------------
+
+#--------------------------
+# Console hide/show helpers
+#--------------------------
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+
+public class WinAPI {
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetConsoleWindow();
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@ | Out-Null
+
+
+# Cache console handle once
+$script:ConsolePtr = [WinAPI]::GetConsoleWindow()
+
+function Hide-ConsoleWindow {
+    if ($script:ConsolePtr -ne [IntPtr]::Zero) {
+        # 0 = SW_HIDE
+        [WinAPI]::ShowWindow($script:ConsolePtr, 0) | Out-Null
+    }
+}
+
+function Show-ConsoleWindow {
+    if ($script:ConsolePtr -ne [IntPtr]::Zero) {
+        # 5 = SW_SHOW
+        [WinAPI]::ShowWindow($script:ConsolePtr, 5) | Out-Null
+    }
+}
+
+# Hide console while GUI is active
+Hide-ConsoleWindow
+
+
+#-----------------------------------------
 # Global roots (shared with child scripts)
-#-------------------------
+#-----------------------------------------
 $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 
 $Global:IntuneToolRoot     = $scriptRoot
@@ -32,8 +71,8 @@ $Global:IntunePolicyDefinitions = @(
     [pscustomobject]@{ Key = 'EndpointSecurity-EPM';                Title = '5. Endpoint Privilege Management' }
     [pscustomobject]@{ Key = 'EndpointSecurity-EDR';                Title = '6. Endpoint Detection and Response' }
     [pscustomobject]@{ Key = 'EndpointSecurity-AppControl';         Title = '7. App Control for Business' }
-    [pscustomobject]@{ Key = 'EndpointSecurity-ASR';                Title = '8. Attack surface reduction' }
-    [pscustomobject]@{ Key = 'EndpointSecurity-AccountProtection';  Title = '9. Account protection' }
+    [pscustomobject]@{ Key = 'EndpointSecurity-ASR';                Title = '8. Attack Surface Reduction' }
+    [pscustomobject]@{ Key = 'EndpointSecurity-AccountProtection';  Title = '9. Account Protection' }
     [pscustomobject]@{ Key = 'DeviceCompliance';                    Title = '10. Device Compliance' }
     [pscustomobject]@{ Key = 'ConditionalAccess';                   Title = '11. Conditional Access' }
     [pscustomobject]@{ Key = 'Uncategorized';                       Title = '99. Uncategorized' }
@@ -45,6 +84,9 @@ $Global:IntuneSelectedPolicyKeys = @()
 # Form 1 – Export / Import
 #-------------------------
 function Show-MainSelectionForm {
+    # reset selection each time the form is shown
+    $script:selectedAction = $null
+
     $form                  = New-Object System.Windows.Forms.Form
     $form.Text             = 'Intune Policy Tool'
     $form.StartPosition    = 'CenterScreen'
@@ -81,8 +123,6 @@ function Show-MainSelectionForm {
     $form.Controls.Add($groupBox)
     $form.Controls.Add($btnOK)
 
-    $selectedAction = $null
-
     $updateOk = {
         $btnOK.Enabled = ($rbExport.Checked -or $rbImport.Checked)
     }
@@ -92,7 +132,7 @@ function Show-MainSelectionForm {
 
     $btnOK.Add_Click({
         if ($rbExport.Checked)      { $script:selectedAction = 'Export' }
-        elseif ($rbImport.Checked) { $script:selectedAction = 'Import' }
+        elseif ($rbImport.Checked)  { $script:selectedAction = 'Import' }
         $form.Close()
     })
 
@@ -103,24 +143,28 @@ function Show-MainSelectionForm {
 
     [void]$form.ShowDialog()
 
-    return $script:selectedAction   # $null if user hit X
+    return $script:selectedAction   # will be $null if X was pressed
 }
 
-#-------------------------
+
+#--------------------------
 # Form 2 – Policy selection
-#-------------------------
+#--------------------------
 function Show-PolicySelectionForm {
     param(
         [Parameter(Mandatory)]
         [string]$Action
     )
 
+    # reset global + script state each time
     $Global:IntuneSelectedPolicyKeys = @()
+    $script:result       = 'Cancel'
+    $script:selectedKeys = @()
 
     $form                  = New-Object System.Windows.Forms.Form
     $form.Text             = "Select Intune Policies to Process ($Action)"
     $form.StartPosition    = 'CenterScreen'
-    $form.Size             = New-Object System.Drawing.Size(500,420)
+    $form.Size             = New-Object System.Drawing.Size(500,432)
     $form.FormBorderStyle  = 'FixedDialog'
     $form.MaximizeBox      = $false
     $form.MinimizeBox      = $false
@@ -135,7 +179,7 @@ function Show-PolicySelectionForm {
     $clbPolicies.Location  = New-Object System.Drawing.Point(15,25)
     $clbPolicies.Size      = New-Object System.Drawing.Size(430,250)
     $clbPolicies.CheckOnClick  = $true
-    $clbPolicies.DisplayMember = 'Title'   # what user sees
+    $clbPolicies.DisplayMember = 'Title'
 
     foreach ($p in $Global:IntunePolicyDefinitions) {
         [void]$clbPolicies.Items.Add($p)
@@ -163,9 +207,6 @@ function Show-PolicySelectionForm {
     $form.Controls.Add($btnBack)
     $form.Controls.Add($btnProcess)
 
-    $result      = 'Cancel'   # default if X is pressed
-    $selectedKeys = @()
-
     $chkSelectAll.Add_CheckedChanged({
         for ($i = 0; $i -lt $clbPolicies.Items.Count; $i++) {
             $clbPolicies.SetItemChecked($i, $chkSelectAll.Checked)
@@ -190,9 +231,9 @@ function Show-PolicySelectionForm {
             return
         }
 
-        $script:selectedKeys               = $checked | ForEach-Object { $_.Key }
-        $Global:IntuneSelectedPolicyKeys   = $script:selectedKeys
-        $script:result                     = 'Process'
+        $script:selectedKeys             = $checked | ForEach-Object { $_.Key }
+        $Global:IntuneSelectedPolicyKeys = $script:selectedKeys
+        $script:result                   = 'Process'
         $form.Close()
     })
 
@@ -209,6 +250,7 @@ function Show-PolicySelectionForm {
     }
 }
 
+
 #-------------------------
 # Main flow
 #-------------------------
@@ -216,15 +258,15 @@ while ($true) {
     # Form 1
     $action = Show-MainSelectionForm
     if (-not $action) {
-        # User closed with X -> terminate script
-        break
+        # User closed with X -> terminate the PowerShell process
+        exit
     }
 
     # Form 2
     $selectionResult = Show-PolicySelectionForm -Action $action
     if (-not $selectionResult -or $selectionResult.Result -eq 'Cancel') {
-        # User hit X on second form -> terminate
-        break
+        # User hit X on second form -> terminate the PowerShell process
+        exit
     }
 
     switch ($selectionResult.Result) {
@@ -243,6 +285,9 @@ while ($true) {
                 ) | Out-Null
                 break
             }
+
+            # Show console now that we're about to process/export/import
+            Show-ConsoleWindow
 
             switch ($action) {
                 'Export' {
@@ -273,9 +318,11 @@ while ($true) {
 
             break   # after processing, exit loop/script
         }
+
         default {
             break   # safety
         }
     }
 }
+
 

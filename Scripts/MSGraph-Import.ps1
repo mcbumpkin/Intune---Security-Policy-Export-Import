@@ -96,6 +96,11 @@ function Ensure-GraphModule {
 }
 
 function Connect-IntuneGraph {
+    <#
+    .SYNOPSIS
+    Connects to Microsoft Graph with the required scopes.
+    Always forces a fresh login (no reuse of previous tenant/session).
+    #>
     [CmdletBinding()]
     param(
         [string[]]$Scopes = $RequiredScopes,
@@ -105,18 +110,38 @@ function Connect-IntuneGraph {
     Ensure-GraphModule
     Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 
-    if ($UseDeviceCode) {
-        Connect-MgGraph -Scopes $Scopes -UseDeviceCode | Out-Null
+    # Always drop any existing Graph context so we don't accidentally reuse
+    # a previous tenant/session between runs.
+    try {
+        Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
     }
-    else {
-        Connect-MgGraph -Scopes $Scopes | Out-Null
+    catch {
+        # Ignore any disconnect errors
+    }
+
+    try {
+        if ($UseDeviceCode) {
+            # Device code flow – always interactive by design
+            Connect-MgGraph -Scopes $Scopes -UseDeviceCode -ContextScope Process -NoWelcome | Out-Null
+        }
+        else {
+            # Interactive login – will prompt because we just disconnected
+            Connect-MgGraph -Scopes $Scopes -ContextScope Process -NoWelcome | Out-Null
+        }
+    }
+    catch {
+        Write-Error "Connect-MgGraph threw a terminating error: $($_.Exception.Message)"
+        throw
     }
 
     $ctx = Get-MgContext
-    if (-not $ctx) { throw "Failed to obtain Microsoft Graph context after Connect-MgGraph." }
+    if (-not $ctx) {
+        throw "Failed to obtain Microsoft Graph context after Connect-MgGraph."
+    }
 
-    Write-Host "Connected to Microsoft Graph as $($ctx.Account)" -ForegroundColor Cyan
+    Write-Host "Connected to Microsoft Graph as $($ctx.Account) (Tenant: $($ctx.TenantId))" -ForegroundColor Cyan
 }
+
 
 function Invoke-GraphPost {
     [CmdletBinding()]
