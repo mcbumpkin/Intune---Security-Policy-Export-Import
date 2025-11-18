@@ -1,0 +1,100 @@
+﻿{
+    "deletedDateTime":  null,
+    "conditions":  {
+                       "clientAppTypes":  [
+                                              "all"
+                                          ],
+                       "times":  null,
+                       "devices":  {
+                                       "excludeDevices":  [
+
+                                                          ],
+                                       "includeDevices":  [
+
+                                                          ],
+                                       "includeDeviceStates":  [
+
+                                                               ],
+                                       "deviceFilter":  {
+                                                            "rule":  "device.trustType -ne \"ServerAD\" -or device.isCompliant -ne True",
+                                                            "mode":  "include"
+                                                        },
+                                       "excludeDeviceStates":  [
+
+                                                               ]
+                                   },
+                       "applications":  {
+                                            "applicationFilter":  null,
+                                            "includeAuthenticationContextClassReferences":  [
+
+                                                                                            ],
+                                            "excludeApplications":  [
+
+                                                                    ],
+                                            "includeApplications":  [
+                                                                        "All"
+                                                                    ],
+                                            "includeUserActions":  [
+
+                                                                   ]
+                                        },
+                       "deviceStates":  null,
+                       "clientApplications":  null,
+                       "userRiskLevels":  [
+
+                                          ],
+                       "users":  {
+                                     "excludeGroups":  [
+
+                                                       ],
+                                     "excludeUsers":  [
+
+                                                      ],
+                                     "includeGuestsOrExternalUsers":  null,
+                                     "includeRoles":  [
+
+                                                      ],
+                                     "excludeRoles":  [
+
+                                                      ],
+                                     "includeUsers":  [
+                                                          "None"
+                                                      ],
+                                     "includeGroups":  [
+
+                                                       ],
+                                     "excludeGuestsOrExternalUsers":  null
+                                 },
+                       "signInRiskLevels":  [
+
+                                            ],
+                       "platforms":  null,
+                       "locations":  null
+                   },
+    "displayName":  "1.5 No: Persistent Browser Session",
+    "grantControls":  null,
+    "templateId":  null,
+    "partialEnablementStrategy":  null,
+    "id":  "128f7ec3-c6c7-496c-b6fd-fcdebc680b61",
+    "modifiedDateTime":  "\/Date(1763121504844)\/",
+    "state":  "disabled",
+    "sessionControls":  {
+                            "signInFrequency":  {
+                                                    "isEnabled":  true,
+                                                    "type":  "hours",
+                                                    "authenticationType":  "primaryAndSecondaryAuthentication",
+                                                    "frequencyInterval":  "timeBased",
+                                                    "value":  1
+                                                },
+                            "disableResilienceDefaults":  null,
+                            "cloudAppSecurity":  null,
+                            "secureSignInSession":  null,
+                            "continuousAccessEvaluation":  null,
+                            "applicationEnforcedRestrictions":  null,
+                            "persistentBrowser":  {
+                                                      "isEnabled":  true,
+                                                      "mode":  "never"
+                                                  }
+                        },
+    "createdDateTime":  "\/Date(1763121261545)\/"
+}

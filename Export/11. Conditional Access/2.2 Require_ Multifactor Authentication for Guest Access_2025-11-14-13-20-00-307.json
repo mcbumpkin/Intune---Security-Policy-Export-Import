@@ -1,0 +1,102 @@
+﻿{
+    "deletedDateTime":  null,
+    "conditions":  {
+                       "clientAppTypes":  [
+                                              "all"
+                                          ],
+                       "times":  null,
+                       "devices":  null,
+                       "applications":  {
+                                            "applicationFilter":  null,
+                                            "includeAuthenticationContextClassReferences":  [
+
+                                                                                            ],
+                                            "excludeApplications":  [
+
+                                                                    ],
+                                            "includeApplications":  [
+                                                                        "All"
+                                                                    ],
+                                            "includeUserActions":  [
+
+                                                                   ]
+                                        },
+                       "deviceStates":  null,
+                       "clientApplications":  null,
+                       "userRiskLevels":  [
+
+                                          ],
+                       "users":  {
+                                     "excludeGroups":  [
+
+                                                       ],
+                                     "excludeUsers":  [
+
+                                                      ],
+                                     "includeGuestsOrExternalUsers":  {
+                                                                          "guestOrExternalUserTypes":  "internalGuest,b2bCollaborationGuest,b2bCollaborationMember,b2bDirectConnectUser,otherExternalUser,serviceProvider",
+                                                                          "externalTenants":  {
+                                                                                                  "@odata.type":  "#microsoft.graph.conditionalAccessAllExternalTenants",
+                                                                                                  "membershipKind":  "all"
+                                                                                              }
+                                                                      },
+                                     "includeRoles":  [
+
+                                                      ],
+                                     "excludeRoles":  [
+
+                                                      ],
+                                     "includeUsers":  [
+
+                                                      ],
+                                     "includeGroups":  [
+
+                                                       ],
+                                     "excludeGuestsOrExternalUsers":  null
+                                 },
+                       "signInRiskLevels":  [
+
+                                            ],
+                       "platforms":  null,
+                       "locations":  null
+                   },
+    "displayName":  "2.2 Require: Multifactor Authentication for Guest Access",
+    "grantControls":  {
+                          "authenticationStrength":  null,
+                          "operator":  "OR",
+                          "authenticationStrength@odata.context":  "https://graph.microsoft.com/beta/$metadata#identity/conditionalAccess/policies(\u00273cd9092b-cfa8-4242-9460-a45d8dc3b581\u0027)/grantControls/authenticationStrength/$entity",
+                          "termsOfUse":  [
+
+                                         ],
+                          "customAuthenticationFactors":  [
+
+                                                          ],
+                          "builtInControls":  [
+                                                  "mfa"
+                                              ]
+                      },
+    "templateId":  null,
+    "partialEnablementStrategy":  null,
+    "id":  "3cd9092b-cfa8-4242-9460-a45d8dc3b581",
+    "modifiedDateTime":  "\/Date(1763121540578)\/",
+    "state":  "disabled",
+    "sessionControls":  {
+                            "signInFrequency":  {
+                                                    "isEnabled":  true,
+                                                    "type":  "hours",
+                                                    "authenticationType":  "primaryAndSecondaryAuthentication",
+                                                    "frequencyInterval":  "timeBased",
+                                                    "value":  2
+                                                },
+                            "disableResilienceDefaults":  null,
+                            "cloudAppSecurity":  null,
+                            "secureSignInSession":  null,
+                            "continuousAccessEvaluation":  null,
+                            "applicationEnforcedRestrictions":  null,
+                            "persistentBrowser":  {
+                                                      "isEnabled":  true,
+                                                      "mode":  "never"
+                                                  }
+                        },
+    "createdDateTime":  "\/Date(1763121263677)\/"
+}

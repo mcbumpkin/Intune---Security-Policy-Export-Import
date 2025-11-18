@@ -1,0 +1,86 @@
+﻿{
+    "deletedDateTime":  null,
+    "conditions":  {
+                       "clientAppTypes":  [
+                                              "all"
+                                          ],
+                       "times":  null,
+                       "devices":  null,
+                       "applications":  {
+                                            "applicationFilter":  null,
+                                            "includeAuthenticationContextClassReferences":  [
+
+                                                                                            ],
+                                            "excludeApplications":  [
+
+                                                                    ],
+                                            "includeApplications":  [
+
+                                                                    ],
+                                            "includeUserActions":  [
+                                                                       "urn:user:registersecurityinfo"
+                                                                   ]
+                                        },
+                       "deviceStates":  null,
+                       "clientApplications":  null,
+                       "userRiskLevels":  [
+
+                                          ],
+                       "users":  {
+                                     "excludeGroups":  [
+
+                                                       ],
+                                     "excludeUsers":  [
+
+                                                      ],
+                                     "includeGuestsOrExternalUsers":  null,
+                                     "includeRoles":  [
+
+                                                      ],
+                                     "excludeRoles":  [
+
+                                                      ],
+                                     "includeUsers":  [
+                                                          "None"
+                                                      ],
+                                     "includeGroups":  [
+
+                                                       ],
+                                     "excludeGuestsOrExternalUsers":  null
+                                 },
+                       "signInRiskLevels":  [
+
+                                            ],
+                       "platforms":  null,
+                       "locations":  {
+                                         "excludeLocations":  [
+
+                                                              ],
+                                         "includeLocations":  [
+                                                                  "All"
+                                                              ]
+                                     }
+                   },
+    "displayName":  "1.3 Securing: Security Info Registration",
+    "sessionControls":  null,
+    "templateId":  null,
+    "partialEnablementStrategy":  null,
+    "id":  "25bb9f5c-7348-4151-b5b5-54789bf37e0f",
+    "modifiedDateTime":  "\/Date(1763121446650)\/",
+    "state":  "disabled",
+    "grantControls":  {
+                          "authenticationStrength":  null,
+                          "operator":  "OR",
+                          "authenticationStrength@odata.context":  "https://graph.microsoft.com/beta/$metadata#identity/conditionalAccess/policies(\u002725bb9f5c-7348-4151-b5b5-54789bf37e0f\u0027)/grantControls/authenticationStrength/$entity",
+                          "termsOfUse":  [
+
+                                         ],
+                          "customAuthenticationFactors":  [
+
+                                                          ],
+                          "builtInControls":  [
+                                                  "mfa"
+                                              ]
+                      },
+    "createdDateTime":  "\/Date(1763121259669)\/"
+}

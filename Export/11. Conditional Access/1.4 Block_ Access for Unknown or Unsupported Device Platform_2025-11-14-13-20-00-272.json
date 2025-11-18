@@ -1,0 +1,89 @@
+﻿{
+    "deletedDateTime":  null,
+    "conditions":  {
+                       "clientAppTypes":  [
+                                              "all"
+                                          ],
+                       "times":  null,
+                       "devices":  null,
+                       "applications":  {
+                                            "applicationFilter":  null,
+                                            "includeAuthenticationContextClassReferences":  [
+
+                                                                                            ],
+                                            "excludeApplications":  [
+
+                                                                    ],
+                                            "includeApplications":  [
+                                                                        "All"
+                                                                    ],
+                                            "includeUserActions":  [
+
+                                                                   ]
+                                        },
+                       "deviceStates":  null,
+                       "clientApplications":  null,
+                       "userRiskLevels":  [
+
+                                          ],
+                       "users":  {
+                                     "excludeGroups":  [
+
+                                                       ],
+                                     "excludeUsers":  [
+
+                                                      ],
+                                     "includeGuestsOrExternalUsers":  null,
+                                     "includeRoles":  [
+
+                                                      ],
+                                     "excludeRoles":  [
+
+                                                      ],
+                                     "includeUsers":  [
+                                                          "None"
+                                                      ],
+                                     "includeGroups":  [
+
+                                                       ],
+                                     "excludeGuestsOrExternalUsers":  null
+                                 },
+                       "signInRiskLevels":  [
+
+                                            ],
+                       "platforms":  {
+                                         "includePlatforms":  [
+                                                                  "all"
+                                                              ],
+                                         "excludePlatforms":  [
+                                                                  "android",
+                                                                  "iOS",
+                                                                  "windows",
+                                                                  "macOS"
+                                                              ]
+                                     },
+                       "locations":  null
+                   },
+    "displayName":  "1.4 Block: Access for Unknown or Unsupported Device Platform",
+    "sessionControls":  null,
+    "templateId":  null,
+    "partialEnablementStrategy":  null,
+    "id":  "6985fb50-fe18-4e1e-9525-ea86bde05b4b",
+    "modifiedDateTime":  "\/Date(1763121484156)\/",
+    "state":  "disabled",
+    "grantControls":  {
+                          "authenticationStrength":  null,
+                          "operator":  "OR",
+                          "authenticationStrength@odata.context":  "https://graph.microsoft.com/beta/$metadata#identity/conditionalAccess/policies(\u00276985fb50-fe18-4e1e-9525-ea86bde05b4b\u0027)/grantControls/authenticationStrength/$entity",
+                          "termsOfUse":  [
+
+                                         ],
+                          "customAuthenticationFactors":  [
+
+                                                          ],
+                          "builtInControls":  [
+                                                  "block"
+                                              ]
+                      },
+    "createdDateTime":  "\/Date(1763121260553)\/"
+}

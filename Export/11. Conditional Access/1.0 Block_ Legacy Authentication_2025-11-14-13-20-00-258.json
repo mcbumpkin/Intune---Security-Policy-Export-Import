@@ -1,0 +1,80 @@
+﻿{
+    "deletedDateTime":  null,
+    "conditions":  {
+                       "clientAppTypes":  [
+                                              "exchangeActiveSync",
+                                              "other"
+                                          ],
+                       "times":  null,
+                       "devices":  null,
+                       "applications":  {
+                                            "applicationFilter":  null,
+                                            "includeAuthenticationContextClassReferences":  [
+
+                                                                                            ],
+                                            "excludeApplications":  [
+
+                                                                    ],
+                                            "includeApplications":  [
+                                                                        "All"
+                                                                    ],
+                                            "includeUserActions":  [
+
+                                                                   ]
+                                        },
+                       "deviceStates":  null,
+                       "clientApplications":  null,
+                       "userRiskLevels":  [
+
+                                          ],
+                       "users":  {
+                                     "excludeGroups":  [
+
+                                                       ],
+                                     "excludeUsers":  [
+
+                                                      ],
+                                     "includeGuestsOrExternalUsers":  null,
+                                     "includeRoles":  [
+
+                                                      ],
+                                     "excludeRoles":  [
+
+                                                      ],
+                                     "includeUsers":  [
+                                                          "None"
+                                                      ],
+                                     "includeGroups":  [
+
+                                                       ],
+                                     "excludeGuestsOrExternalUsers":  null
+                                 },
+                       "signInRiskLevels":  [
+
+                                            ],
+                       "platforms":  null,
+                       "locations":  null
+                   },
+    "displayName":  "1.0 Block: Legacy Authentication",
+    "sessionControls":  null,
+    "templateId":  null,
+    "partialEnablementStrategy":  null,
+    "id":  "d763f3ae-3889-4f88-8e1d-21810186e92b",
+    "modifiedDateTime":  "\/Date(1763121420571)\/",
+    "state":  "disabled",
+    "grantControls":  {
+                          "authenticationStrength":  null,
+                          "operator":  "OR",
+                          "authenticationStrength@odata.context":  "https://graph.microsoft.com/beta/$metadata#identity/conditionalAccess/policies(\u0027d763f3ae-3889-4f88-8e1d-21810186e92b\u0027)/grantControls/authenticationStrength/$entity",
+                          "termsOfUse":  [
+
+                                         ],
+                          "customAuthenticationFactors":  [
+
+                                                          ],
+                          "builtInControls":  [
+                                                  "block"
+                                              ]
+                      },
+    "createdDateTime":  "\/Date(1763121256444)\/"
+}

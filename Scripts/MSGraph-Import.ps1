@@ -1,7 +1,7 @@
 #======================================================================================#
 #                                                                                      #
-#                         Intune Endpoint Security Exporter                            #
-##           This script will import almost all policies from Intune                  ##
+#                         Intune Endpoint Security Importer                            #
+##           This script will import almost all policies into Intune                  ##
 #                                                                                      #
 #                 Script Created by Andreas Daneville 13-11-2025                       #
 #======================================================================================#
@@ -13,14 +13,29 @@ param(
     [switch]$UseDeviceCode
 )
 
+# =========================
+# Resolve ImportRootPath
+# =========================
+
 if (-not $ImportRootPath) {
-    $scriptPath = $MyInvocation.MyCommand.Path
-    if ($scriptPath) {
-        $scriptDir = Split-Path -Parent $scriptPath
-        $ImportRootPath = Join-Path $scriptDir 'Export'
+    if ($Global:IntuneExportRoot) {
+        # Preferred: provided by BootStrapper GUI
+        $ImportRootPath = $Global:IntuneExportRoot
+    }
+    elseif ($Global:IntuneToolRoot) {
+        # Fallback: tool root from BootStrapper
+        $ImportRootPath = Join-Path $Global:IntuneToolRoot 'Export'
     }
     else {
-        $ImportRootPath = Join-Path (Get-Location).Path 'Export'
+        # Final fallback: local script-based resolution
+        $scriptPath = $MyInvocation.MyCommand.Path
+        if ($scriptPath) {
+            $scriptDir      = Split-Path -Parent $scriptPath
+            $ImportRootPath = Join-Path (Split-Path -Parent $scriptDir) 'Export'
+        }
+        else {
+            $ImportRootPath = Join-Path (Get-Location).Path 'Export'
+        }
     }
 }
 
@@ -42,18 +57,32 @@ $FolderNames = @{
     Uncategorized       = '99. Uncategorized'
 }
 
+# All possible selection keys (must match BootStrapper GUI and exporter)
+$AllSelectionKeys = @(
+    'EndpointSecurity-Baselines',
+    'EndpointSecurity-Antivirus',
+    'EndpointSecurity-DiskEncryption',
+    'EndpointSecurity-Firewall',
+    'EndpointSecurity-EPM',
+    'EndpointSecurity-EDR',
+    'EndpointSecurity-AppControl',
+    'EndpointSecurity-ASR',
+    'EndpointSecurity-AccountProtection',
+    'DeviceCompliance',
+    'ConditionalAccess',
+    'Uncategorized'
+)
+
 # Graph scopes – we need write perms now
 $RequiredScopes = @(
     'DeviceManagementConfiguration.ReadWrite.All'
     'DeviceManagementConfiguration.Read.All'
-    'DeviceManagementManagedDevices.Read.All'        # often needed with Intune
-    'DeviceManagementConfiguration.ReadWrite.All'    # explicit
-    'DeviceManagementConfiguration.Read.All'
+    'DeviceManagementManagedDevices.Read.All'
     'Policy.ReadWrite.ConditionalAccess'
     'Policy.Read.All'
 )
 
-$GraphApiVersion = 'beta'  # for Intune config; CA + compliance mostly v1.0, but we can use SDK cmdlets later if needed.
+$GraphApiVersion = 'beta'  # for config policies
 
 function Ensure-GraphModule {
     [CmdletBinding()]
@@ -119,10 +148,6 @@ function Get-JsonFromFile {
 }
 
 function Remove-ReadOnlyProperties {
-    <#
-      Generic helper to strip common read-only Graph properties
-      (id, createdDateTime, etc.) from an object before POST.
-    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]$Object,
@@ -138,8 +163,7 @@ function Remove-ReadOnlyProperties {
         '@odata.etag'
     ) + $Extra
 
-    # Shallow clone and remove props
-    $result = $Object | Select-Object *  # creates a copy
+    $result = $Object | Select-Object *  # shallow clone
 
     foreach ($prop in $readOnly) {
         if ($result.PSObject.Properties.Name -contains $prop) {
@@ -150,29 +174,25 @@ function Remove-ReadOnlyProperties {
     return $result
 }
 
-
 # =========================
-# Import: Baseline
+# OData filter helper
 # =========================
 
 function New-ODataFilterEncoded {
-    <#
-      Builds a URL-encoded $filter expression with correct OData string quoting.
-    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Property,
         [Parameter(Mandatory)][string]$Value
     )
 
-    # Escape single quotes for OData: ' -> ''
     $escaped = $Value.Replace("'", "''")
     $filter  = "$Property eq '$escaped'"
-
-    # URL-encode the whole filter expression (so & becomes %26 etc.)
     return [System.Uri]::EscapeDataString($filter)
 }
 
+# =========================
+# Import: Config / Endpoint Security / Baseline
+# =========================
 
 function Import-ConfigurationPolicyFromFile {
     [CmdletBinding()]
@@ -189,7 +209,7 @@ function Import-ConfigurationPolicyFromFile {
         return
     }
 
-    # Duplicate check by name (safe filter encoding)
+    # Duplicate check by name
     try {
         $filterEncoded = New-ODataFilterEncoded -Property 'name' -Value $obj.name
         $existing = Invoke-MgGraphRequest -Method GET -Uri "/$GraphApiVersion/deviceManagement/configurationPolicies?`$filter=$filterEncoded" -ErrorAction Stop
@@ -202,32 +222,25 @@ function Import-ConfigurationPolicyFromFile {
         Write-Host "  Warning: duplicate-check GET failed, continuing without name check. ($($_.Exception.Message))" -ForegroundColor DarkYellow
     }
 
-    # Template family (we stored this in the export object)
     $templateFamily = $obj.TemplateFamily
+    $settings       = $obj.settings
 
-    # Default: use exported settings
-    $settings = $obj.settings
-
-    # Special case: EDR onboarding-from-connector setting is not importable
+    # Special case EDR – drop Defender ATP onboarding settings
     if ($templateFamily -eq 'endpointSecurityEndpointDetectionAndResponse') {
         $beforeCount = @($settings).Count
 
-        $settings = @($settings | Where-Object {
-            # Try to catch problematic definition IDs.
-            $defId = $_.settingDefinitionId
-            if (-not $defId -and $_.definitionId) { $defId = $_.definitionId }
-
-            -not ($defId -like '*device_vendor_msft_windowsadvancedthreatprotection_onboarding_fromconnector*')
-        })
+        $settings = @(
+            $settings | Where-Object {
+                ($_ | ConvertTo-Json -Depth 20) -notlike '*device_vendor_msft_windowsadvancedthreatprotection_onboarding*'
+            }
+        )
 
         $afterCount = @($settings).Count
-
         if ($beforeCount -ne $afterCount) {
-            Write-Host "  EDR: stripped $($beforeCount - $afterCount) onboarding-from-connector setting(s) that are not importable." -ForegroundColor DarkYellow
+            Write-Host "  EDR: stripped $($beforeCount - $afterCount) Defender ATP onboarding setting(s)." -ForegroundColor DarkYellow
         }
     }
 
-    # Build body
     $body = [PSCustomObject]@{
         name              = $obj.name
         description       = $obj.description
@@ -244,10 +257,12 @@ function Import-ConfigurationPolicyFromFile {
     }
     catch {
         Write-Host "  FAILED to create configuration policy '$($obj.name)': $($_.Exception.Message)" -ForegroundColor Red
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+            Write-Host "  Graph details: $($_.ErrorDetails.Message)" -ForegroundColor DarkRed
+        }
         return
     }
 }
-
 
 # =========================
 # Import: Device Compliance
@@ -261,15 +276,33 @@ function Import-DeviceCompliancePolicyFromFile {
 
     Write-Host "Importing Device Compliance policy from: $Path" -ForegroundColor Cyan
 
-    $obj = Get-JsonFromFile -Path $Path
+    $obj  = Get-JsonFromFile -Path $Path
+    $safe = Remove-ReadOnlyProperties -Object $obj -Extra @('assignments', 'scheduledActionsForRule')
 
-    # Strip read-only + problematic props
-    $safe = Remove-ReadOnlyProperties -Object $obj -Extra @(
-        'scheduledActionsForRule',  # let Intune create default block action
-        'assignments'               # cross-tenant assignments rarely portable
-    )
+    $ruleName = 'PasswordRequired'
+    if ($obj.scheduledActionsForRule -and $obj.scheduledActionsForRule[0].ruleName) {
+        $ruleName = $obj.scheduledActionsForRule[0].ruleName
+    }
 
-    # Duplicate check by displayName
+    $blockRule = [PSCustomObject]@{
+        ruleName = $ruleName
+        scheduledActionConfigurations = @(
+            [PSCustomObject]@{
+                actionType                = 'block'
+                gracePeriodHours          = 0
+                notificationTemplateId    = ''
+                notificationMessageCCList = @()
+            }
+        )
+    }
+
+    if ($safe.PSObject.Properties.Name -contains 'scheduledActionsForRule') {
+        $safe.scheduledActionsForRule = @($blockRule)
+    }
+    else {
+        $safe | Add-Member -MemberType NoteProperty -Name 'scheduledActionsForRule' -Value @($blockRule)
+    }
+
     try {
         $filterEncoded = New-ODataFilterEncoded -Property 'displayName' -Value $safe.displayName
         $existing = Invoke-MgGraphRequest -Method GET -Uri "/v1.0/deviceManagement/deviceCompliancePolicies?`$filter=$filterEncoded" -ErrorAction Stop
@@ -282,8 +315,7 @@ function Import-DeviceCompliancePolicyFromFile {
         Write-Host "  Warning: duplicate-check GET failed for compliance policy '$($safe.displayName)', continuing. ($($_.Exception.Message))" -ForegroundColor DarkYellow
     }
 
-    # POST to /deviceManagement/deviceCompliancePolicies (v1.0)
-    $uri = "/v1.0/deviceManagement/deviceCompliancePolicies"
+    $uri      = "/v1.0/deviceManagement/deviceCompliancePolicies"
     $bodyJson = $safe | ConvertTo-Json -Depth 20
 
     try {
@@ -292,13 +324,15 @@ function Import-DeviceCompliancePolicyFromFile {
     }
     catch {
         Write-Host "  FAILED to create Device Compliance policy '$($safe.displayName)': $($_.Exception.Message)" -ForegroundColor Red
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+            Write-Host "  Graph details: $($_.ErrorDetails.Message)" -ForegroundColor DarkRed
+        }
         return
     }
 }
 
-
 # =========================
-# Import: CA Policies
+# Import: Conditional Access
 # =========================
 
 function Import-ConditionalAccessPolicyFromFile {
@@ -311,20 +345,46 @@ function Import-ConditionalAccessPolicyFromFile {
 
     $obj = Get-JsonFromFile -Path $Path
 
-    # Build a clean CA payload that matches the schema
+    $conditions = $obj.conditions
+
+    $grantSrc = $obj.grantControls
+    $grant    = $null
+
+    if ($grantSrc) {
+        $grant = [PSCustomObject]@{
+            operator                    = $grantSrc.operator
+            builtInControls             = $grantSrc.builtInControls
+            customAuthenticationFactors = $grantSrc.customAuthenticationFactors
+            termsOfUse                  = $grantSrc.termsOfUse
+        }
+
+        if ($grantSrc.PSObject.Properties.Name -contains 'authenticationStrength' -and
+            $grantSrc.authenticationStrength) {
+
+            $auth       = $grantSrc.authenticationStrength
+            $hasBuiltIn = ($grant.builtInControls -and $grant.builtInControls.Count -gt 0)
+
+            if (-not $hasBuiltIn -and $auth.requirementsSatisfied -eq 'mfa') {
+                Write-Host "  CA: authenticationStrength 'mfa' mapped to builtInControls = ['mfa']." -ForegroundColor DarkYellow
+                $grant.builtInControls = @('mfa')
+            }
+        }
+    }
+
+    $session = $obj.sessionControls
+
     $body = [PSCustomObject]@{
-        displayName      = $obj.displayName
-        state            = $obj.state
-        conditions       = $obj.conditions
-        grantControls    = $obj.grantControls
-        sessionControls  = $obj.sessionControls
+        displayName     = $obj.displayName
+        state           = $obj.state
+        conditions      = $conditions
+        grantControls   = $grant
+        sessionControls = $session
     }
 
     if ($obj.PSObject.Properties.Name -contains 'description' -and $obj.description) {
         $body | Add-Member -MemberType NoteProperty -Name 'description' -Value $obj.description
     }
 
-    # Duplicate check by displayName
     try {
         $filterEncoded = New-ODataFilterEncoded -Property 'displayName' -Value $body.displayName
         $existing = Invoke-MgGraphRequest -Method GET -Uri "/v1.0/identity/conditionalAccess/policies?`$filter=$filterEncoded" -ErrorAction Stop
@@ -337,7 +397,7 @@ function Import-ConditionalAccessPolicyFromFile {
         Write-Host "  Warning: duplicate-check GET failed for CA policy '$($body.displayName)', continuing. ($($_.Exception.Message))" -ForegroundColor DarkYellow
     }
 
-    $uri = "/v1.0/identity/conditionalAccess/policies"
+    $uri      = "/v1.0/identity/conditionalAccess/policies"
     $bodyJson = $body | ConvertTo-Json -Depth 20
 
     try {
@@ -350,7 +410,6 @@ function Import-ConditionalAccessPolicyFromFile {
     }
 }
 
-
 # =========================
 # Main orchestrator
 # =========================
@@ -362,63 +421,104 @@ function Import-IntuneSecurityFromExport {
         [switch]$UseDeviceCode
     )
 
+    # --- resolve selection coming from GUI (or default to all) ---
+    $selectedKeys = $Global:IntuneSelectedPolicyKeys
+    if (-not $selectedKeys -or $selectedKeys.Count -eq 0) {
+        $selectedKeys = $AllSelectionKeys
+    }
+
+    $includeBaseline          = $selectedKeys -contains 'EndpointSecurity-Baselines'
+    $includeAV                = $selectedKeys -contains 'EndpointSecurity-Antivirus'
+    $includeDisk              = $selectedKeys -contains 'EndpointSecurity-DiskEncryption'
+    $includeFirewall          = $selectedKeys -contains 'EndpointSecurity-Firewall'
+    $includeEPM               = $selectedKeys -contains 'EndpointSecurity-EPM'
+    $includeEDR               = $selectedKeys -contains 'EndpointSecurity-EDR'
+    $includeAppControl        = $selectedKeys -contains 'EndpointSecurity-AppControl'
+    $includeASR               = $selectedKeys -contains 'EndpointSecurity-ASR'
+    $includeAccountProtection = $selectedKeys -contains 'EndpointSecurity-AccountProtection'
+
+    $includeDeviceCompliance  = $selectedKeys -contains 'DeviceCompliance'
+    $includeConditionalAccess = $selectedKeys -contains 'ConditionalAccess'
+    $includeUncategorized     = $selectedKeys -contains 'Uncategorized'
+
     Connect-IntuneGraph -UseDeviceCode:$UseDeviceCode
 
     if (-not (Test-Path -LiteralPath $RootPath)) {
         throw "Import root path '$RootPath' does not exist."
     }
 
-    # 1–9: unified configuration policies
-    $configFolders = @(
-        $FolderNames.SecurityBaselines,
-        $FolderNames.Antivirus,
-        $FolderNames.DiskEncryption,
-        $FolderNames.Firewall,
-        $FolderNames.EPM,
-        $FolderNames.EDR,
-        $FolderNames.AppControl,
-        $FolderNames.ASR,
-        $FolderNames.AccountProtection
-    )
+    # Build list of configPolicy folders to import based on selection
+    $configFolders = @()
 
-    foreach ($folderName in $configFolders) {
-        $folderPath = Join-Path $RootPath $folderName
-        if (-not (Test-Path -LiteralPath $folderPath)) { continue }
+    if ($includeBaseline)          { $configFolders += $FolderNames.SecurityBaselines }
+    if ($includeAV)                { $configFolders += $FolderNames.Antivirus }
+    if ($includeDisk)              { $configFolders += $FolderNames.DiskEncryption }
+    if ($includeFirewall)          { $configFolders += $FolderNames.Firewall }
+    if ($includeEPM)               { $configFolders += $FolderNames.EPM }
+    if ($includeEDR)               { $configFolders += $FolderNames.EDR }
+    if ($includeAppControl)        { $configFolders += $FolderNames.AppControl }
+    if ($includeASR)               { $configFolders += $FolderNames.ASR }
+    if ($includeAccountProtection) { $configFolders += $FolderNames.AccountProtection }
+    if ($includeUncategorized)     { $configFolders += $FolderNames.Uncategorized }
 
-        Write-Host ""
-        Write-Host "Processing configuration policies in folder: $folderPath" -ForegroundColor DarkCyan
+    if ($configFolders.Count -gt 0) {
+        foreach ($folderName in $configFolders) {
+            $folderPath = Join-Path $RootPath $folderName
+            if (-not (Test-Path -LiteralPath $folderPath)) { continue }
 
-        Get-ChildItem -LiteralPath $folderPath -Filter *.json | ForEach-Object {
-            Import-ConfigurationPolicyFromFile -Path $_.FullName
+            Write-Host ""
+            Write-Host "Processing configuration policies in folder: $folderPath" -ForegroundColor DarkCyan
+
+            Get-ChildItem -LiteralPath $folderPath -Filter *.json | ForEach-Object {
+                Import-ConfigurationPolicyFromFile -Path $_.FullName
+            }
         }
+    }
+    else {
+        Write-Host "No Endpoint Security / Baseline / Uncategorized categories selected. Skipping configurationPolicies import." -ForegroundColor Yellow
     }
 
     # Device Compliance
-    $dcPath = Join-Path $RootPath $FolderNames.DeviceCompliance
-    if (Test-Path -LiteralPath $dcPath) {
-        Write-Host ""
-        Write-Host "Processing Device Compliance policies in folder: $dcPath" -ForegroundColor DarkCyan
+    if ($includeDeviceCompliance) {
+        $dcPath = Join-Path $RootPath $FolderNames.DeviceCompliance
+        if (Test-Path -LiteralPath $dcPath) {
+            Write-Host ""
+            Write-Host "Processing Device Compliance policies in folder: $dcPath" -ForegroundColor DarkCyan
 
-        Get-ChildItem -LiteralPath $dcPath -Filter *.json | ForEach-Object {
-            Import-DeviceCompliancePolicyFromFile -Path $_.FullName
+            Get-ChildItem -LiteralPath $dcPath -Filter *.json | ForEach-Object {
+                Import-DeviceCompliancePolicyFromFile -Path $_.FullName
+            }
         }
+        else {
+            Write-Host "Device Compliance folder '$dcPath' not found. Skipping." -ForegroundColor DarkYellow
+        }
+    }
+    else {
+        Write-Host "Device Compliance not selected. Skipping." -ForegroundColor DarkGray
     }
 
     # Conditional Access
-    $caPath = Join-Path $RootPath $FolderNames.ConditionalAccess
-    if (Test-Path -LiteralPath $caPath) {
-        Write-Host ""
-        Write-Host "Processing Conditional Access policies in folder: $caPath" -ForegroundColor DarkCyan
+    if ($includeConditionalAccess) {
+        $caPath = Join-Path $RootPath $FolderNames.ConditionalAccess
+        if (Test-Path -LiteralPath $caPath) {
+            Write-Host ""
+            Write-Host "Processing Conditional Access policies in folder: $caPath" -ForegroundColor DarkCyan
 
-        Get-ChildItem -LiteralPath $caPath -Filter *.json | ForEach-Object {
-            Import-ConditionalAccessPolicyFromFile -Path $_.FullName
+            Get-ChildItem -LiteralPath $caPath -Filter *.json | ForEach-Object {
+                Import-ConditionalAccessPolicyFromFile -Path $_.FullName
+            }
         }
+        else {
+            Write-Host "Conditional Access folder '$caPath' not found. Skipping." -ForegroundColor DarkYellow
+        }
+    }
+    else {
+        Write-Host "Conditional Access not selected. Skipping." -ForegroundColor DarkGray
     }
 
     Write-Host ""
     Write-Host "Import run complete." -ForegroundColor Cyan
 }
-
 
 #########################################
 ### BootStrapper

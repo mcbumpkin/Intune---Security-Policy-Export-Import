@@ -1,0 +1,93 @@
+﻿{
+    "deletedDateTime":  null,
+    "conditions":  {
+                       "clientAppTypes":  [
+                                              "all"
+                                          ],
+                       "times":  null,
+                       "devices":  null,
+                       "applications":  {
+                                            "applicationFilter":  null,
+                                            "includeAuthenticationContextClassReferences":  [
+
+                                                                                            ],
+                                            "excludeApplications":  [
+
+                                                                    ],
+                                            "includeApplications":  [
+                                                                        "797f4846-ba00-4fd7-ba43-dac1f8f63013"
+                                                                    ],
+                                            "includeUserActions":  [
+
+                                                                   ]
+                                        },
+                       "deviceStates":  null,
+                       "clientApplications":  null,
+                       "userRiskLevels":  [
+
+                                          ],
+                       "users":  {
+                                     "excludeGroups":  [
+
+                                                       ],
+                                     "excludeUsers":  [
+
+                                                      ],
+                                     "includeGuestsOrExternalUsers":  null,
+                                     "includeRoles":  [
+
+                                                      ],
+                                     "excludeRoles":  [
+
+                                                      ],
+                                     "includeUsers":  [
+                                                          "None"
+                                                      ],
+                                     "includeGroups":  [
+
+                                                       ],
+                                     "excludeGuestsOrExternalUsers":  null
+                                 },
+                       "signInRiskLevels":  [
+
+                                            ],
+                       "platforms":  null,
+                       "locations":  null
+                   },
+    "displayName":  "1.1 Require: Multifactor Authentication for Azure Management",
+    "grantControls":  {
+                          "authenticationStrength":  null,
+                          "operator":  "OR",
+                          "authenticationStrength@odata.context":  "https://graph.microsoft.com/beta/$metadata#identity/conditionalAccess/policies(\u0027bae8e4f2-237d-4f6d-93c5-121e5577caa0\u0027)/grantControls/authenticationStrength/$entity",
+                          "termsOfUse":  [
+
+                                         ],
+                          "customAuthenticationFactors":  [
+
+                                                          ],
+                          "builtInControls":  [
+                                                  "mfa"
+                                              ]
+                      },
+    "templateId":  null,
+    "partialEnablementStrategy":  null,
+    "id":  "bae8e4f2-237d-4f6d-93c5-121e5577caa0",
+    "modifiedDateTime":  "\/Date(1763121431012)\/",
+    "state":  "disabled",
+    "sessionControls":  {
+                            "signInFrequency":  {
+                                                    "isEnabled":  true,
+                                                    "type":  "hours",
+                                                    "authenticationType":  "primaryAndSecondaryAuthentication",
+                                                    "frequencyInterval":  "timeBased",
+                                                    "value":  2
+                                                },
+                            "disableResilienceDefaults":  null,
+                            "cloudAppSecurity":  null,
+                            "secureSignInSession":  null,
+                            "continuousAccessEvaluation":  null,
+                            "applicationEnforcedRestrictions":  null,
+                            "persistentBrowser":  null
+                        },
+    "createdDateTime":  "\/Date(1763121257827)\/"
+}

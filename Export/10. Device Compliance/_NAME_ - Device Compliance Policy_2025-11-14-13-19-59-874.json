@@ -1,0 +1,53 @@
+﻿{
+    "description":  null,
+    "id":  "f1e7b8b8-5dcd-49e2-9237-44b9a7202a8e",
+    "codeIntegrityEnabled":  true,
+    "passwordRequiredToUnlockFromIdle":  false,
+    "passwordBlockSimple":  false,
+    "deviceCompliancePolicyScript":  null,
+    "defenderVersion":  null,
+    "activeFirewallRequired":  true,
+    "wslDistributions":  [
+
+                         ],
+    "bitLockerEnabled":  false,
+    "storageRequireEncryption":  false,
+    "requireHealthyDeviceReport":  false,
+    "passwordExpirationDays":  null,
+    "@odata.type":  "#microsoft.graph.windows10CompliancePolicy",
+    "rtpEnabled":  true,
+    "osMaximumVersion":  null,
+    "validOperatingSystemBuildRanges":  [
+
+                                        ],
+    "memoryIntegrityEnabled":  false,
+    "defenderEnabled":  true,
+    "passwordPreviousPasswordBlockCount":  null,
+    "deviceThreatProtectionRequiredSecurityLevel":  "medium",
+    "tpmRequired":  true,
+    "roleScopeTagIds":  [
+                            "0"
+                        ],
+    "kernelDmaProtectionEnabled":  false,
+    "antiSpywareRequired":  true,
+    "createdDateTime":  "\/Date(1763122544804)\/",
+    "passwordRequired":  true,
+    "passwordMinutesOfInactivityBeforeLock":  null,
+    "passwordMinimumLength":  6,
+    "configurationManagerComplianceRequired":  false,
+    "osMinimumVersion":  null,
+    "earlyLaunchAntiMalwareDriverEnabled":  false,
+    "passwordRequiredType":  "deviceDefault",
+    "version":  1,
+    "lastModifiedDateTime":  "\/Date(1763122544804)\/",
+    "mobileOsMinimumVersion":  null,
+    "displayName":  "\u003cNAME\u003e - Device Compliance Policy",
+    "mobileOsMaximumVersion":  null,
+    "deviceThreatProtectionEnabled":  true,
+    "signatureOutOfDate":  true,
+    "antivirusRequired":  true,
+    "passwordMinimumCharacterSetCount":  null,
+    "firmwareProtectionEnabled":  false,
+    "virtualizationBasedSecurityEnabled":  false,
+    "secureBootEnabled":  true
+}
