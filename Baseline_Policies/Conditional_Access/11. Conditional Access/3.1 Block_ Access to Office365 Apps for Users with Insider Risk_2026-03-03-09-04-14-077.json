@@ -1,0 +1,87 @@
+﻿{
+    "deletedDateTime":  null,
+    "conditions":  {
+                       "agents":  null,
+                       "devices":  null,
+                       "times":  null,
+                       "insiderRiskLevels":  "elevated",
+                       "locations":  null,
+                       "clientAppTypes":  [
+                                              "all"
+                                          ],
+                       "applications":  {
+                                            "applicationFilter":  null,
+                                            "includeAuthenticationContextClassReferences":  [
+
+                                                                                            ],
+                                            "excludeApplications":  [
+
+                                                                    ],
+                                            "includeApplications":  [
+                                                                        "Office365"
+                                                                    ],
+                                            "includeUserActions":  [
+
+                                                                   ]
+                                        },
+                       "signInRiskLevels":  [
+
+                                            ],
+                       "clientApplications":  null,
+                       "platforms":  null,
+                       "users":  {
+                                     "excludeGroups":  [
+
+                                                       ],
+                                     "excludeUsers":  [
+                                                          "6235596d-dc2d-4a60-a5ab-a06ff508225c"
+                                                      ],
+                                     "includeGuestsOrExternalUsers":  null,
+                                     "includeRoles":  [
+
+                                                      ],
+                                     "excludeRoles":  [
+
+                                                      ],
+                                     "includeUsers":  [
+                                                          "All"
+                                                      ],
+                                     "includeGroups":  [
+
+                                                       ],
+                                     "excludeGuestsOrExternalUsers":  {
+                                                                          "guestOrExternalUserTypes":  "b2bDirectConnectUser,otherExternalUser,serviceProvider",
+                                                                          "externalTenants":  {
+                                                                                                  "@odata.type":  "#microsoft.graph.conditionalAccessAllExternalTenants",
+                                                                                                  "membershipKind":  "all"
+                                                                                              }
+                                                                      }
+                                 },
+                       "userRiskLevels":  [
+
+                                          ],
+                       "deviceStates":  null
+                   },
+    "displayName":  "3.1 Block: Access to Office365 Apps for Users with Insider Risk",
+    "sessionControls":  null,
+    "templateId":  "16aaa400-bfdf-4756-a420-ad2245d4cde8",
+    "partialEnablementStrategy":  null,
+    "id":  "2bcd95a2-6546-4e2f-b828-4187a53536b3",
+    "modifiedDateTime":  "\/Date(1762160441559)\/",
+    "state":  "enabled",
+    "grantControls":  {
+                          "authenticationStrength":  null,
+                          "operator":  "OR",
+                          "authenticationStrength@odata.context":  "https://graph.microsoft.com/beta/$metadata#identity/conditionalAccess/policies(\u00272bcd95a2-6546-4e2f-b828-4187a53536b3\u0027)/grantControls/authenticationStrength/$entity",
+                          "termsOfUse":  [
+
+                                         ],
+                          "customAuthenticationFactors":  [
+
+                                                          ],
+                          "builtInControls":  [
+                                                  "block"
+                                              ]
+                      },
+    "createdDateTime":  "\/Date(1754640277252)\/"
+}

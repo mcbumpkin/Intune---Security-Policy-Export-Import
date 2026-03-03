@@ -53,6 +53,7 @@ $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $My
 $Global:IntuneToolRoot     = $scriptRoot
 $Global:IntuneScriptsRoot  = Join-Path $Global:IntuneToolRoot 'Scripts'
 $Global:IntuneExportRoot   = Join-Path $Global:IntuneToolRoot 'Intune_Policy'  # NEW ROOT (was Export)
+$Global:IntuneBaselineRoot = Join-Path $Global:IntuneToolRoot 'Baseline_Policies'  # Baseline root (mirrors Intune_Policy structure)
 
 #========================================================================
 # Ensure expected folder structure exists
@@ -61,6 +62,7 @@ $Global:IntuneLogsRoot   = Join-Path $Global:IntuneToolRoot 'Logs'
 
 $null = New-Item -Path $Global:IntuneScriptsRoot -ItemType Directory -Force -ErrorAction SilentlyContinue
 $null = New-Item -Path $Global:IntuneExportRoot  -ItemType Directory -Force -ErrorAction SilentlyContinue
+$null = New-Item -Path $Global:IntuneBaselineRoot -ItemType Directory -Force -ErrorAction SilentlyContinue
 $null = New-Item -Path $Global:IntuneLogsRoot    -ItemType Directory -Force -ErrorAction SilentlyContinue
 
 $exportScript = Join-Path $Global:IntuneScriptsRoot 'MSGraph-Export.ps1'
@@ -80,12 +82,13 @@ $Global:IntunePolicyDefinitions = @(
     [pscustomobject]@{ Key = 'EndpointSecurity-ASR';                Title = '8. Attack Surface Reduction' }
     [pscustomobject]@{ Key = 'EndpointSecurity-AccountProtection';  Title = '9. Account Protection' }
     [pscustomobject]@{ Key = 'DeviceCompliance';                    Title = '10. Device Compliance' }
-    [pscustomobject]@{ Key = 'ConditionalAccess';                   Title = '11. Conditional Access' }
     [pscustomobject]@{ Key = 'Uncategorized';                       Title = '99. Uncategorized' }
 )
 
 $Global:IntuneTargetOS = $null
 $Global:IntuneSelectedPolicyKeys = @()
+$Global:IntuneImportSource = 'MostRecent'   # MostRecent | Baseline
+$Global:IntuneImportRoot   = $Global:IntuneExportRoot
 
 # -------------------------
 # Start Page – Scope selection
@@ -314,6 +317,93 @@ function Show-MainSelectionForm {
     return $script:selectedAction   # 'Export' | 'Import' | 'Back' | $null (X)
 }
 
+
+#-------------------------
+# Form – Import Source
+#-------------------------
+function Show-ImportSourceSelectionForm {
+    param(
+        [ValidateSet('IntuneSecurity','ConditionalAccess')]
+        [string]$Scope = 'IntuneSecurity'
+    )
+
+    $script:selectedImportSource = $null
+
+    $form                 = New-Object System.Windows.Forms.Form
+    $form.Text            = 'Import Source'
+    $form.StartPosition   = 'CenterScreen'
+    $form.Size            = New-Object System.Drawing.Size(520,240)
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MaximizeBox     = $false
+    $form.MinimizeBox     = $false
+    $form.TopMost         = $true
+
+    $groupBox             = New-Object System.Windows.Forms.GroupBox
+    $groupBox.Text        = 'Select import source'
+    $groupBox.Location    = New-Object System.Drawing.Point(15,15)
+    $groupBox.Size        = New-Object System.Drawing.Size(470,130)
+
+    $rbBaseline           = New-Object System.Windows.Forms.RadioButton
+    $rbBaseline.Text      = 'Baseline Policies (Baseline_Policies)'
+    $rbBaseline.Location  = New-Object System.Drawing.Point(20,35)
+    $rbBaseline.AutoSize  = $true
+
+    $rbMostRecent         = New-Object System.Windows.Forms.RadioButton
+    $rbMostRecent.Text    = 'Most Recent Export (Intune_Policy)'
+    $rbMostRecent.Location= New-Object System.Drawing.Point(20,70)
+    $rbMostRecent.AutoSize= $true
+
+    # Reset selection each time the form is shown (do not persist previous choice)
+    $rbBaseline.Checked   = $false
+    $rbMostRecent.Checked = $false
+
+    $groupBox.Controls.Add($rbBaseline)
+    $groupBox.Controls.Add($rbMostRecent)
+
+    $btnBack              = New-Object System.Windows.Forms.Button
+    $btnBack.Text         = 'Back'
+    $btnBack.Location     = New-Object System.Drawing.Point(290,160)
+    $btnBack.Size         = New-Object System.Drawing.Size(95,30)
+
+    $btnOK                = New-Object System.Windows.Forms.Button
+    $btnOK.Text           = 'OK'
+    $btnOK.Location       = New-Object System.Drawing.Point(390,160)
+    $btnOK.Size           = New-Object System.Drawing.Size(95,30)
+    $btnOK.Enabled        = $false
+
+    $form.Controls.Add($groupBox)
+    $form.Controls.Add($btnBack)
+    $form.Controls.Add($btnOK)
+
+    $updateOk = {
+        $btnOK.Enabled = ($rbBaseline.Checked -or $rbMostRecent.Checked)
+    }
+
+    $rbBaseline.Add_CheckedChanged($updateOk)
+    $rbMostRecent.Add_CheckedChanged($updateOk)
+
+    $btnBack.Add_Click({
+        $script:selectedImportSource = 'Back'
+        $form.Close()
+    })
+
+    $btnOK.Add_Click({
+        if ($rbBaseline.Checked)      { $script:selectedImportSource = 'Baseline' }
+        elseif ($rbMostRecent.Checked){ $script:selectedImportSource = 'MostRecent' }
+        $form.Close()
+    })
+
+    $form.Add_Shown({
+        $form.Activate()
+        $form.BringToFront()
+    })
+
+    [void]$form.ShowDialog()
+
+    return $script:selectedImportSource  # 'Baseline' | 'MostRecent' | 'Back' | $null (X)
+}
+
+
 #--------------------------
 # Form – Policy selection
 #--------------------------
@@ -450,6 +540,25 @@ while ($true) {
                     break
                 }
 
+
+                if ($action -eq 'Import') {
+                    $importSource = Show-ImportSourceSelectionForm -Scope 'IntuneSecurity'
+                    if (-not $importSource) { exit }
+
+                    if ($importSource -eq 'Back') {
+                        # Back to action selector
+                        continue
+                    }
+
+                    $Global:IntuneImportSource = $importSource
+                    $Global:IntuneImportRoot   = if ($importSource -eq 'Baseline') { $Global:IntuneBaselineRoot } else { $Global:IntuneExportRoot }
+                }
+                else {
+                    # For export runs, always use Intune_Policy as the working root
+                    $Global:IntuneImportSource = 'MostRecent'
+                    $Global:IntuneImportRoot   = $Global:IntuneExportRoot
+                }
+
                 # Policy selection
                 $exclude = @()
                 if ($action -eq 'Export') {
@@ -525,6 +634,23 @@ while ($true) {
             if ($action -eq 'Back') {
                 # Back to Start Page
                 break
+            }
+
+            if ($action -eq 'Import') {
+                $importSource = Show-ImportSourceSelectionForm -Scope 'ConditionalAccess'
+                if (-not $importSource) { exit }
+
+                if ($importSource -eq 'Back') {
+                    # Back to action selector
+                    continue
+                }
+
+                $Global:IntuneImportSource = $importSource
+                $Global:IntuneImportRoot   = if ($importSource -eq 'Baseline') { $Global:IntuneBaselineRoot } else { $Global:IntuneExportRoot }
+            }
+            else {
+                $Global:IntuneImportSource = 'MostRecent'
+                $Global:IntuneImportRoot   = $Global:IntuneExportRoot
             }
 
             # Auto-select CA (11) because this path implies Conditional Access

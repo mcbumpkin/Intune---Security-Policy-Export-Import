@@ -18,28 +18,35 @@ param(
 # =========================
 
 if (-not $ImportRootPath) {
-    if ($Global:IntuneExportRoot) {
-        # Preferred: provided by BootStrapper GUI
+
+    # 1) Preferred: Import root set by BootStrapper (Baseline vs Most Recent export)
+    if ($Global:IntuneImportRoot) {
+        $ImportRootPath = $Global:IntuneImportRoot
+    }
+    # 2) Compatibility: tool may still set ExportRoot globals
+    elseif ($Global:IntuneExportRoot) {
         $ImportRootPath = $Global:IntuneExportRoot
     }
+    # 3) Tool root fallback
     elseif ($Global:IntuneToolRoot) {
-        # Fallback: tool root from BootStrapper
-        $ImportRootPath = Join-Path $Global:IntuneToolRoot 'Export'
+        $ImportRootPath = Join-Path $Global:IntuneToolRoot 'Intune_Policy'
     }
     else {
         # Final fallback: local script-based resolution
         $scriptPath = $MyInvocation.MyCommand.Path
         if ($scriptPath) {
             $scriptDir      = Split-Path -Parent $scriptPath
-            $ImportRootPath = Join-Path (Split-Path -Parent $scriptDir) 'Export'
+            # Scripts\MSGraph-Import.ps1 -> tool root = parent of Scripts
+            $ImportRootPath = Join-Path (Split-Path -Parent $scriptDir) 'Intune_Policy'
         }
         else {
-            $ImportRootPath = Join-Path (Get-Location).Path 'Export'
+            $ImportRootPath = Join-Path (Get-Location).Path 'Intune_Policy'
         }
     }
 }
 
 Write-Host "Import root path resolved to: $ImportRootPath" -ForegroundColor DarkCyan
+
 
 # Folder names we expect (must match exporter)
 $FolderNames = @{
@@ -55,6 +62,25 @@ $FolderNames = @{
     DeviceCompliance    = '10. Device Compliance'
     ConditionalAccess   = '11. Conditional Access'
     Uncategorized       = '99. Uncategorized'
+}
+
+# Subfolders under 99 (must match exporter)
+$UncategorizedSubfolders = @{
+    ConfigPolicies       = 'ConfigurationPolicies'
+    DeviceConfigurations = 'DeviceConfigurations'
+}
+
+function Get-TargetOS {
+    [CmdletBinding()]
+    param()
+
+    # Expected values from BootStrapper: 'Windows' or 'macOS'
+    if ($Global:IntuneTargetOS -and $Global:IntuneTargetOS.Trim().Length -gt 0) {
+        return $Global:IntuneTargetOS.Trim()
+    }
+
+    # Standalone fallback: 'All' (matches exporter behavior)
+    return 'All'
 }
 
 # All possible selection keys (must match BootStrapper GUI and exporter)
@@ -73,7 +99,7 @@ $AllSelectionKeys = @(
     'Uncategorized'
 )
 
-# Graph scopes – we need write perms now
+# Graph scopes  we need write perms now
 $RequiredScopes = @(
     'DeviceManagementConfiguration.ReadWrite.All'
     'DeviceManagementConfiguration.Read.All'
@@ -121,11 +147,11 @@ function Connect-IntuneGraph {
 
     try {
         if ($UseDeviceCode) {
-            # Device code flow – always interactive by design
+            # Device code flow  always interactive by design
             Connect-MgGraph -Scopes $Scopes -UseDeviceCode -ContextScope Process -NoWelcome | Out-Null
         }
         else {
-            # Interactive login – will prompt because we just disconnected
+            # Interactive login  will prompt because we just disconnected
             Connect-MgGraph -Scopes $Scopes -ContextScope Process -NoWelcome | Out-Null
         }
     }
@@ -230,7 +256,7 @@ function Import-ConfigurationPolicyFromFile {
     $obj = Get-JsonFromFile -Path $Path
 
     if (-not $obj.templateReference -or -not $obj.settings) {
-        Write-Host "  Skipping (no templateReference/settings) – likely not a configurationPolicy export." -ForegroundColor DarkYellow
+        Write-Host "  Skipping (no templateReference/settings)  likely not a configurationPolicy export." -ForegroundColor DarkYellow
         return
     }
 
@@ -250,7 +276,23 @@ function Import-ConfigurationPolicyFromFile {
     $templateFamily = $obj.TemplateFamily
     $settings       = $obj.settings
 
-    # Special case EDR – drop Defender ATP onboarding settings
+    # Normalize: Graph expects settings to be an array
+    if ($null -ne $settings) {
+
+        # If settings isn't already an array, wrap it
+        if ($settings -isnot [System.Array]) {
+            $settings = @($settings)
+        }
+
+        # Remove per-setting "id" if present (GET artifact; can break POST schema)
+        foreach ($s in $settings) {
+            if ($s -and $s.PSObject.Properties.Name -contains 'id') {
+                $null = $s.PSObject.Properties.Remove('id')
+            }
+        }
+    }
+
+    # Special case EDR: drop Defender ATP onboarding settings
     if ($templateFamily -eq 'endpointSecurityEndpointDetectionAndResponse') {
         $beforeCount = @($settings).Count
 
@@ -353,6 +395,52 @@ function Import-DeviceCompliancePolicyFromFile {
             Write-Host "  Graph details: $($_.ErrorDetails.Message)" -ForegroundColor DarkRed
         }
         return
+    }
+}
+
+
+function Import-DeviceConfigurationFromFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    Write-Host "Importing device configuration from: $Path" -ForegroundColor Cyan
+
+    $obj = Get-JsonFromFile -Path $Path
+
+    if (-not $obj.displayName) {
+        Write-Host "  Skipping (no displayName) likely not a deviceConfiguration export." -ForegroundColor DarkYellow
+        return
+    }
+
+    # Duplicate check by displayName
+    try {
+        $filterEncoded = New-ODataFilterEncoded -Property 'displayName' -Value $obj.displayName
+        $existing = Invoke-MgGraphRequest -Method GET -Uri "/$GraphApiVersion/deviceManagement/deviceConfigurations?`$filter=$filterEncoded" -ErrorAction Stop
+        if ($existing.value -and $existing.value.Count -gt 0) {
+            Write-Host "  A device configuration named '$($obj.displayName)' already exists. Skipping." -ForegroundColor Yellow
+            return
+        }
+    }
+    catch {
+        Write-Host "  Warning: duplicate-check GET failed, continuing without name check. ($($_.Exception.Message))" -ForegroundColor DarkYellow
+    }
+
+    # Remove read-only & noisy properties
+    $clean = Remove-ReadOnlyProperties -Object $obj -Extra @(
+        '@odata.context',
+        '@odata.etag',
+        'version',
+        'supportsScopeTags'
+    )
+
+    try {
+        Invoke-GraphPost -RelativeUri 'deviceManagement/deviceConfigurations' -BodyObject $clean | Out-Null
+        Write-Host "  Imported device configuration: $($obj.displayName)" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "  FAILED importing device configuration '$($obj.displayName)': $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 
@@ -472,7 +560,15 @@ function Import-IntuneSecurityFromExport {
         throw "Import root path '$RootPath' does not exist."
     }
 
-    # Build list of configPolicy folders to import based on selection
+    # OS-scoped exports live under <RootPath>\<TargetOS>\...
+    $targetOS = Get-TargetOS
+    $osRoot   = Join-Path $RootPath $targetOS
+
+    if (-not (Test-Path -LiteralPath $osRoot)) {
+        throw "OS import path '$osRoot' does not exist. (Root='$RootPath', TargetOS='$targetOS')"
+    }
+
+    # Build list of configurationPolicy folders to import based on selection
     $configFolders = @()
 
     if ($includeBaseline)          { $configFolders += $FolderNames.SecurityBaselines }
@@ -488,7 +584,38 @@ function Import-IntuneSecurityFromExport {
 
     if ($configFolders.Count -gt 0) {
         foreach ($folderName in $configFolders) {
-            $folderPath = Join-Path $RootPath $folderName
+
+            # 99 is split into subfolders for different policy families
+            if ($folderName -eq $FolderNames.Uncategorized) {
+
+                $uncatRoot = Join-Path $osRoot $FolderNames.Uncategorized
+
+                # 99\ConfigurationPolicies
+                $cfg99 = Join-Path $uncatRoot $UncategorizedSubfolders.ConfigPolicies
+                if (Test-Path -LiteralPath $cfg99) {
+                    Write-Host ""
+                    Write-Host "Processing configuration policies in folder: $cfg99" -ForegroundColor DarkCyan
+
+                    Get-ChildItem -LiteralPath $cfg99 -Filter *.json | ForEach-Object {
+                        Import-ConfigurationPolicyFromFile -Path $_.FullName
+                    }
+                }
+
+                # 99\DeviceConfigurations
+                $dev99 = Join-Path $uncatRoot $UncategorizedSubfolders.DeviceConfigurations
+                if (Test-Path -LiteralPath $dev99) {
+                    Write-Host ""
+                    Write-Host "Processing device configurations in folder: $dev99" -ForegroundColor DarkCyan
+
+                    Get-ChildItem -LiteralPath $dev99 -Filter *.json | ForEach-Object {
+                        Import-DeviceConfigurationFromFile -Path $_.FullName
+                    }
+                }
+
+                continue
+            }
+
+            $folderPath = Join-Path $osRoot $folderName
             if (-not (Test-Path -LiteralPath $folderPath)) { continue }
 
             Write-Host ""
@@ -505,7 +632,7 @@ function Import-IntuneSecurityFromExport {
 
     # Device Compliance
     if ($includeDeviceCompliance) {
-        $dcPath = Join-Path $RootPath $FolderNames.DeviceCompliance
+        $dcPath = Join-Path $osRoot $FolderNames.DeviceCompliance
         if (Test-Path -LiteralPath $dcPath) {
             Write-Host ""
             Write-Host "Processing Device Compliance policies in folder: $dcPath" -ForegroundColor DarkCyan
@@ -524,7 +651,7 @@ function Import-IntuneSecurityFromExport {
 
     # Conditional Access
     if ($includeConditionalAccess) {
-        $caPath = Join-Path $RootPath $FolderNames.ConditionalAccess
+        $caPath = Join-Path (Join-Path $RootPath 'Conditional_Access') $FolderNames.ConditionalAccess
         if (Test-Path -LiteralPath $caPath) {
             Write-Host ""
             Write-Host "Processing Conditional Access policies in folder: $caPath" -ForegroundColor DarkCyan

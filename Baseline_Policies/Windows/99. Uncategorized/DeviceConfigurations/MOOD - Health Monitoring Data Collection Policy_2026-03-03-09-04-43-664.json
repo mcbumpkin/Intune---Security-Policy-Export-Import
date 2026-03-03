@@ -1,0 +1,19 @@
+﻿{
+    "@odata.type":  "#microsoft.graph.windowsHealthMonitoringConfiguration",
+    "description":  "",
+    "configDeviceHealthMonitoringCustomScope":  null,
+    "id":  "abb44980-a25f-4426-83ea-b6fc2a09381f",
+    "roleScopeTagIds":  [
+                            "0"
+                        ],
+    "supportsScopeTags":  true,
+    "allowDeviceHealthMonitoring":  "enabled",
+    "createdDateTime":  "\/Date(1759930654964)\/",
+    "configDeviceHealthMonitoringScope":  "bootPerformance",
+    "displayName":  "MOOD - Health Monitoring Data Collection Policy",
+    "lastModifiedDateTime":  "\/Date(1759997143276)\/",
+    "version":  3,
+    "deviceManagementApplicabilityRuleOsVersion":  null,
+    "deviceManagementApplicabilityRuleDeviceMode":  null,
+    "deviceManagementApplicabilityRuleOsEdition":  null
+}

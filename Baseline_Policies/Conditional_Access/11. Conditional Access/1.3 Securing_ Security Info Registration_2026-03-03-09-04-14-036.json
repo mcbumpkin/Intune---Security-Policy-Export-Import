@@ -1,0 +1,93 @@
+﻿{
+    "deletedDateTime":  null,
+    "conditions":  {
+                       "clientAppTypes":  [
+                                              "all"
+                                          ],
+                       "times":  null,
+                       "agents":  null,
+                       "devices":  null,
+                       "applications":  {
+                                            "applicationFilter":  null,
+                                            "includeAuthenticationContextClassReferences":  [
+
+                                                                                            ],
+                                            "excludeApplications":  [
+
+                                                                    ],
+                                            "includeApplications":  [
+
+                                                                    ],
+                                            "includeUserActions":  [
+                                                                       "urn:user:registersecurityinfo"
+                                                                   ]
+                                        },
+                       "deviceStates":  null,
+                       "clientApplications":  null,
+                       "userRiskLevels":  [
+
+                                          ],
+                       "users":  {
+                                     "excludeGroups":  [
+                                                           "35158900-8df3-46ca-811f-7a56e30c38c0"
+                                                       ],
+                                     "excludeUsers":  [
+
+                                                      ],
+                                     "includeGuestsOrExternalUsers":  null,
+                                     "includeRoles":  [
+
+                                                      ],
+                                     "excludeRoles":  [
+                                                          "62e90394-69f5-4237-9190-012177145e10"
+                                                      ],
+                                     "includeUsers":  [
+                                                          "All"
+                                                      ],
+                                     "includeGroups":  [
+
+                                                       ],
+                                     "excludeGuestsOrExternalUsers":  {
+                                                                          "guestOrExternalUserTypes":  "internalGuest,b2bCollaborationGuest,b2bCollaborationMember,b2bDirectConnectUser,otherExternalUser,serviceProvider",
+                                                                          "externalTenants":  {
+                                                                                                  "@odata.type":  "#microsoft.graph.conditionalAccessAllExternalTenants",
+                                                                                                  "membershipKind":  "all"
+                                                                                              }
+                                                                      }
+                                 },
+                       "signInRiskLevels":  [
+
+                                            ],
+                       "platforms":  null,
+                       "locations":  {
+                                         "excludeLocations":  [
+
+                                                              ],
+                                         "includeLocations":  [
+                                                                  "All"
+                                                              ]
+                                     }
+                   },
+    "displayName":  "1.3 Securing: Security Info Registration",
+    "sessionControls":  null,
+    "templateId":  "b8bda7f8-6584-4446-bce9-d871480e53fa",
+    "partialEnablementStrategy":  null,
+    "id":  "d7c94c8d-29f9-44e9-9146-b197030de388",
+    "modifiedDateTime":  "\/Date(1762268267726)\/",
+    "state":  "enabledForReportingButNotEnforced",
+    "grantControls":  {
+                          "authenticationStrength":  null,
+                          "operator":  "OR",
+                          "authenticationStrength@odata.context":  "https://graph.microsoft.com/beta/$metadata#identity/conditionalAccess/policies(\u0027d7c94c8d-29f9-44e9-9146-b197030de388\u0027)/grantControls/authenticationStrength/$entity",
+                          "termsOfUse":  [
+
+                                         ],
+                          "customAuthenticationFactors":  [
+
+                                                          ],
+                          "builtInControls":  [
+                                                  "mfa"
+                                              ]
+                      },
+    "createdDateTime":  "\/Date(1754568190458)\/"
+}
