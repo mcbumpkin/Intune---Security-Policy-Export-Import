@@ -3,7 +3,7 @@
 #                         Intune Endpoint Security Importer                            #
 ##           This script will import almost all policies into Intune                  ##
 #                                                                                      #
-#                 Script Created by Andreas Daneville 13-11-2025                       #
+#                 Script Created by Andreas Daneville 03-03-2026                       #
 #======================================================================================#
 
 [CmdletBinding()]

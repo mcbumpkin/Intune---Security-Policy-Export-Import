@@ -3,7 +3,7 @@
 #                         Intune Endpoint Security Exporter                            #
 ## This script exports targeted Intune security policies + catch-all config profiles   ##
 #                                                                                      #
-#                 Script Created by Andreas Daneville 13-11-2025                       #
+#                 Script Created by Andreas Daneville 03-03-2026                       #
 #======================================================================================#
 
 [CmdletBinding()]

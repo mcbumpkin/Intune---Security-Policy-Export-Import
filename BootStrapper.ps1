@@ -3,7 +3,7 @@
 #                         Intune Policy Tool - Launcher GUI                            #
 ##      This script is the Bootstrapper for the Intune Export and Import Scripts      ##
 #                                                                                      #
-#                 Script Created by Andreas Daneville 18-11-2025                       #
+#                 Script Created by Andreas Daneville 03-03-2026                       #
 #======================================================================================#
 
 Add-Type -AssemblyName System.Windows.Forms
