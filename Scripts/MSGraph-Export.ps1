@@ -1,7 +1,7 @@
 #======================================================================================#
 #                                                                                      #
 #                         Intune Endpoint Security Exporter                            #
-## This script will export almost all policies from Intune and place them in a folder ##
+## This script exports targeted Intune security policies + catch-all config profiles   ##
 #                                                                                      #
 #                 Script Created by Andreas Daneville 13-11-2025                       #
 #======================================================================================#
@@ -16,15 +16,11 @@ param(
 # =========================
 # Resolve ExportRootPath
 # =========================
-
+# NEW ROOT: Intune_Policy (instead of Export)
 if (-not $ExportRootPath) {
-    if ($Global:IntuneExportRoot) {
-        # Preferred: provided by BootStrapper GUI
-        $ExportRootPath = $Global:IntuneExportRoot
-    }
-    elseif ($Global:IntuneToolRoot) {
-        # Fallback: tool root from BootStrapper
-        $ExportRootPath = Join-Path $Global:IntuneToolRoot 'Export'
+    if ($Global:IntuneToolRoot) {
+        # Preferred: tool root from BootStrapper
+        $ExportRootPath = Join-Path $Global:IntuneToolRoot 'Intune_Policy'
     }
     else {
         # Final fallback: local script-based resolution
@@ -32,10 +28,11 @@ if (-not $ExportRootPath) {
 
         if ($scriptPath) {
             $scriptDir      = Split-Path -Parent $scriptPath
-            $ExportRootPath = Join-Path (Split-Path -Parent $scriptDir) 'Export'
+            # Scripts\MSGraph-Export.ps1 -> tool root = parent of Scripts
+            $ExportRootPath = Join-Path (Split-Path -Parent $scriptDir) 'Intune_Policy'
         }
         else {
-            $ExportRootPath = Join-Path (Get-Location).Path 'Export'
+            $ExportRootPath = Join-Path (Get-Location).Path 'Intune_Policy'
         }
     }
 }
@@ -44,7 +41,8 @@ if (-not $ExportRootPath) {
 # Config: Folders & Scopes
 # =========================
 
-# Folder names (your 1–11 + 99 structure)
+# Folder names (your 1â€“11 + 99 structure)
+# NOTE: 11 is exported under Conditional_Access (separate branch)
 $FolderMap = @{
     SecurityBaselines   = '1. Security Baselines'
     Antivirus           = '2. Antivirus'
@@ -58,6 +56,12 @@ $FolderMap = @{
     DeviceCompliance    = '10. Device Compliance'
     ConditionalAccess   = '11. Conditional Access'
     Other               = '99. Uncategorized'
+}
+
+# Subfolders under 99 to keep it readable
+$UncategorizedSubfolders = @{
+    ConfigPolicies       = 'ConfigurationPolicies'
+    DeviceConfigurations = 'DeviceConfigurations'
 }
 
 # All possible selection keys (must match BootStrapper GUI)
@@ -85,6 +89,45 @@ $RequiredScopes = @(
 # API version (Endpoint security is still mostly in /beta)
 $GraphApiVersion = 'beta'
 
+# Exclude onboarding packages (tenant-unique)
+$OnboardingNameExcludePatterns = @(
+    '*onboarding*',
+    '*deploy onboarding*',
+    '*defender onboarding*',
+    '*mdatp onboarding*'
+)
+
+# Exclude Windows Autopatch (tenant-managed / not wanted for export/import baselines)
+$AutopatchNameExcludePatterns = @(
+    '*windows autopatch*',
+    '*autopatch*'
+)
+
+function Test-NameMatchesExcludePattern {
+    [CmdletBinding()]
+    param(
+        [string]$DisplayName,
+        [string[]]$Patterns
+    )
+
+    if (-not $DisplayName) { return $false }
+    foreach ($p in $Patterns) {
+        if ($DisplayName -like $p) { return $true }
+    }
+    return $false
+}
+
+function Test-ShouldExcludePolicyByName {
+    [CmdletBinding()]
+    param([string]$Name)
+
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+
+    if (Test-NameMatchesExcludePattern -DisplayName $Name -Patterns $OnboardingNameExcludePatterns) { return $true }
+    if (Test-NameMatchesExcludePattern -DisplayName $Name -Patterns $AutopatchNameExcludePatterns) { return $true }
+
+    return $false
+}
 
 # =========================
 # Common helpers
@@ -122,22 +165,13 @@ function Connect-IntuneGraph {
     Ensure-GraphModule
     Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 
-    # Always drop any existing Graph context so we don't accidentally reuse
-    # a previous tenant/session between runs.
-    try {
-        Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
-    }
-    catch {
-        # Ignore any disconnect errors
-    }
+    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch { }
 
     try {
         if ($UseDeviceCode) {
-            # Device code flow – always interactive by design
             Connect-MgGraph -Scopes $Scopes -UseDeviceCode -ContextScope Process -NoWelcome | Out-Null
         }
         else {
-            # Interactive login – will prompt because we just disconnected
             Connect-MgGraph -Scopes $Scopes -ContextScope Process -NoWelcome | Out-Null
         }
     }
@@ -154,7 +188,6 @@ function Connect-IntuneGraph {
     Write-Host "Connected to Microsoft Graph as $($ctx.Account) (Tenant: $($ctx.TenantId))" -ForegroundColor Cyan
 }
 
-
 function Invoke-GraphGet {
     [CmdletBinding()]
     param(
@@ -164,6 +197,46 @@ function Invoke-GraphGet {
 
     $uri = "/$GraphApiVersion/$RelativeUri"
     Invoke-MgGraphRequest -Method GET -Uri $uri -ErrorAction Stop
+}
+
+function Invoke-GraphGetAllPages {
+    <#
+    .SYNOPSIS
+    Retrieves all pages for a Graph collection endpoint and returns a flat array of items.
+    Supports @odata.nextLink.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$RelativeUri
+    )
+
+    $items = New-Object System.Collections.Generic.List[object]
+
+    $next = "/$GraphApiVersion/$RelativeUri"
+
+    while ($next) {
+        $resp = Invoke-MgGraphRequest -Method GET -Uri $next -ErrorAction Stop
+
+        if ($resp -and $resp.value) {
+            foreach ($v in $resp.value) { [void]$items.Add($v) }
+        }
+
+        $nextLink = $null
+        if ($resp -and $resp.PSObject.Properties.Name -contains '@odata.nextLink') {
+            $nextLink = $resp.'@odata.nextLink'
+        }
+
+        if ([string]::IsNullOrWhiteSpace($nextLink)) {
+            $next = $null
+        }
+        else {
+            # nextLink is usually an absolute URL; MgGraphRequest accepts it.
+            $next = $nextLink
+        }
+    }
+
+    return $items.ToArray()
 }
 
 function Export-JsonData {
@@ -177,13 +250,13 @@ function Export-JsonData {
         New-Item -ItemType Directory -Path $ExportPath -Force | Out-Null
     }
 
-    $jsonString = $Json | ConvertTo-Json -Depth 10
+    # Depth bump to avoid truncating nested settings objects
+    $jsonString = $Json | ConvertTo-Json -Depth 50
     $converted  = $jsonString | ConvertFrom-Json
 
     $displayName = $converted.displayName
-    if (-not $displayName) {
-        $displayName = 'UnnamedPolicy'
-    }
+    if ([string]::IsNullOrWhiteSpace($displayName)) { $displayName = $converted.name }
+    if ([string]::IsNullOrWhiteSpace($displayName)) { $displayName = 'UnnamedPolicy' }
 
     $displayName = $displayName -replace '\<|\>|:|"|/|\\|\||\?|\*', '_'
 
@@ -195,17 +268,96 @@ function Export-JsonData {
     Write-Host "Exported: $fullPath" -ForegroundColor Green
 }
 
+# =========================
+# OS scoping helper
+# =========================
+
+function Get-TargetOS {
+    [CmdletBinding()]
+    param()
+
+    # Expected values from BootStrapper: 'Windows' or 'macOS'
+    if ($Global:IntuneTargetOS -and $Global:IntuneTargetOS.Trim().Length -gt 0) {
+        return $Global:IntuneTargetOS.Trim()
+    }
+
+    # Standalone fallback: do not filter; export under "All"
+    return 'All'
+}
+
+function Test-PolicyMatchesTargetOS {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$TargetOS,
+        [object]$Platforms,
+        [string]$OdataType
+    )
+
+    if ($TargetOS -eq 'All') { return $true }
+
+    $t = $TargetOS.ToLowerInvariant()
+
+    # ---- 1) Prefer "platforms" (configurationPolicies) ----
+    if ($null -ne $Platforms) {
+        $pText = ''
+        if ($Platforms -is [System.Collections.IEnumerable] -and -not ($Platforms -is [string])) {
+            $pText = (@($Platforms) | ForEach-Object { "$_" }) -join ';'
+        }
+        else {
+            $pText = "$Platforms"
+        }
+
+        $p = $pText.ToLowerInvariant()
+
+        # STRICT allow-lists
+        $isWindows = ($p -match 'windows10andlater' -or $p -match 'windows10' -or $p -match 'windows10x' -or $p -match '\bwindows\b')
+        $isMac     = ($p -match 'macos')
+
+        if ($t -eq 'windows') { return $isWindows -and -not $isMac }
+        if ($t -eq 'macos')   { return $isMac -and -not $isWindows }
+
+        return $false
+    }
+
+    # ---- 2) Fallback to @odata.type (deviceConfigurations etc.) ----
+    if ($OdataType) {
+        $o = $OdataType.ToLowerInvariant()
+
+        if ($t -eq 'windows') { return ($o -match 'windows') -and -not ($o -match 'macos') }
+        if ($t -eq 'macos')   { return ($o -match 'macos')   -and -not ($o -match 'windows') }
+    }
+
+    # No signal -> STRICT: do NOT include
+    return $false
+}
+
+function Get-PlatformsForConfigPolicy {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Policy
+    )
+
+    $plat = $Policy.platforms
+
+    if ($null -eq $plat -or "$plat".Trim() -eq '') {
+        try {
+            $full = Invoke-GraphGet -RelativeUri ("deviceManagement/configurationPolicies/{0}" -f $Policy.id)
+            if ($full -and $full.platforms) { $plat = $full.platforms }
+        }
+        catch { }
+    }
+
+    return $plat
+}
 
 # =========================
 # Intune helpers (unified settings platform)
 # =========================
 
-function Get-EndpointSecurityConfigurationPolicies {
+function Get-ConfigurationPolicies {
     [CmdletBinding()]
     param()
-
-    $resource = 'deviceManagement/configurationPolicies'
-    (Invoke-GraphGet -RelativeUri $resource).value
+    Invoke-GraphGetAllPages -RelativeUri 'deviceManagement/configurationPolicies'
 }
 
 function Get-ConfigurationPolicySettings {
@@ -213,10 +365,29 @@ function Get-ConfigurationPolicySettings {
     param(
         [Parameter(Mandatory)][string]$PolicyId
     )
-
-    $resource = "deviceManagement/configurationPolicies/$PolicyId/settings"
-    (Invoke-GraphGet -RelativeUri $resource).value
+    (Invoke-GraphGet -RelativeUri "deviceManagement/configurationPolicies/$PolicyId/settings").value
 }
+
+function Get-DeviceConfigurations {
+    [CmdletBinding()]
+    param()
+    Invoke-GraphGetAllPages -RelativeUri 'deviceManagement/deviceConfigurations'
+}
+
+# IMPORTANT: This list represents ALL endpoint security/baseline families
+# so we can prevent dumping endpoint security policies into 99 even if user didn't select them.
+$AllEndpointSecurityTemplateFamilies = @(
+    'endpointSecurityAntivirus',
+    'endpointSecurityDiskEncryption',
+    'endpointSecurityFirewall',
+    'endpointSecurityEndpointPrivilegeManagement',
+    'endpointSecurityEndpointDetectionAndResponse',
+    'endpointSecurityApplicationControl',
+    'endpointSecurityAttackSurfaceReduction',
+    'endpointSecurityAttackSurfaceReductionRules',
+    'endpointSecurityAccountProtection',
+    'baseline'
+)
 
 function Get-PolicyFolderForTemplate {
     [CmdletBinding()]
@@ -227,37 +398,36 @@ function Get-PolicyFolderForTemplate {
 
     if ($TemplateFamily) {
         switch ($TemplateFamily) {
-            'endpointSecurityAntivirus'                   { return $FolderMap.Antivirus }
-            'endpointSecurityDiskEncryption'              { return $FolderMap.DiskEncryption }
-            'endpointSecurityFirewall'                    { return $FolderMap.Firewall }
-            'endpointSecurityEndpointPrivilegeManagement' { return $FolderMap.EPM }
-            'endpointSecurityEndpointDetectionAndResponse'{ return $FolderMap.EDR }
-            'endpointSecurityApplicationControl'          { return $FolderMap.AppControl }
-            'endpointSecurityAttackSurfaceReduction'      { return $FolderMap.ASR }
-            'endpointSecurityAttackSurfaceReductionRules' { return $FolderMap.ASR }
-            'endpointSecurityAccountProtection'           { return $FolderMap.AccountProtection }
-            'baseline'                                    { return $FolderMap.SecurityBaselines }
-            default                                       { return $FolderMap.Other }
+            'endpointSecurityAntivirus'                    { return $FolderMap.Antivirus }
+            'endpointSecurityDiskEncryption'               { return $FolderMap.DiskEncryption }
+            'endpointSecurityFirewall'                     { return $FolderMap.Firewall }
+            'endpointSecurityEndpointPrivilegeManagement'  { return $FolderMap.EPM }
+            'endpointSecurityEndpointDetectionAndResponse' { return $FolderMap.EDR }
+            'endpointSecurityApplicationControl'           { return $FolderMap.AppControl }
+            'endpointSecurityAttackSurfaceReduction'       { return $FolderMap.ASR }
+            'endpointSecurityAttackSurfaceReductionRules'  { return $FolderMap.ASR }
+            'endpointSecurityAccountProtection'            { return $FolderMap.AccountProtection }
+            'baseline'                                     { return $FolderMap.SecurityBaselines }
+            default                                        { return $FolderMap.Other }
         }
     }
 
     if ($TemplateDisplayName) {
         $name = $TemplateDisplayName.ToLowerInvariant()
 
-        if     ($name -like '*baseline*')                           { return $FolderMap.SecurityBaselines }
+        if     ($name -like '*baseline*')                                         { return $FolderMap.SecurityBaselines }
         elseif ($name -like '*antivirus*' -or $name -like '*defender antivirus*') { return $FolderMap.Antivirus }
         elseif ($name -like '*disk encryption*' -or $name -like '*bitlocker*')    { return $FolderMap.DiskEncryption }
-        elseif ($name -like '*firewall*')                           { return $FolderMap.Firewall }
+        elseif ($name -like '*firewall*')                                         { return $FolderMap.Firewall }
         elseif ($name -like '*endpoint privilege management*' -or $name -like '*epm*') { return $FolderMap.EPM }
         elseif ($name -like '*endpoint detection and response*' -or $name -like '*edr*') { return $FolderMap.EDR }
         elseif ($name -like '*app control for business*' -or $name -like '*app control*') { return $FolderMap.AppControl }
         elseif ($name -like '*attack surface reduction*' -or $name -like '*asr*') { return $FolderMap.ASR }
-        elseif ($name -like '*account protection*')                 { return $FolderMap.AccountProtection }
+        elseif ($name -like '*account protection*')                               { return $FolderMap.AccountProtection }
     }
 
     return $FolderMap.Other
 }
-
 
 # =========================
 # Conditional Access helpers
@@ -266,15 +436,13 @@ function Get-PolicyFolderForTemplate {
 function Get-ConditionalAccessPolicies {
     [CmdletBinding()]
     param()
-
-    $resource = 'identity/conditionalAccess/policies'
-    (Invoke-GraphGet -RelativeUri $resource).value
+    Invoke-GraphGetAllPages -RelativeUri 'identity/conditionalAccess/policies'
 }
 
 function Export-ConditionalAccessPolicies {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$RootPath
+        [Parameter(Mandatory)][string]$ConditionalAccessRoot
     )
 
     Write-Host "Fetching Conditional Access policies..." -ForegroundColor Cyan
@@ -287,11 +455,8 @@ function Export-ConditionalAccessPolicies {
     }
 
     $caFolderName = $FolderMap.ConditionalAccess
-    if (-not $caFolderName) {
-        $caFolderName = '11. Conditional Access'
-    }
+    $exportPath   = Join-Path $ConditionalAccessRoot $caFolderName
 
-    $exportPath = Join-Path $RootPath $caFolderName
     if (-not (Test-Path -LiteralPath $exportPath)) {
         Write-Host "Creating Conditional Access export folder: $exportPath" -ForegroundColor DarkCyan
         New-Item -ItemType Directory -Path $exportPath -Force | Out-Null
@@ -303,7 +468,6 @@ function Export-ConditionalAccessPolicies {
     }
 }
 
-
 # =========================
 # Device Compliance helpers
 # =========================
@@ -311,15 +475,14 @@ function Export-ConditionalAccessPolicies {
 function Get-DeviceCompliancePolicies {
     [CmdletBinding()]
     param()
-
-    $resource = 'deviceManagement/deviceCompliancePolicies'
-    (Invoke-GraphGet -RelativeUri $resource).value
+    Invoke-GraphGetAllPages -RelativeUri 'deviceManagement/deviceCompliancePolicies'
 }
 
 function Export-DeviceCompliancePolicies {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$RootPath
+        [Parameter(Mandatory)][string]$OsRootPath,
+        [Parameter(Mandatory)][string]$TargetOS
     )
 
     Write-Host "Fetching Device Compliance policies..." -ForegroundColor Cyan
@@ -331,23 +494,143 @@ function Export-DeviceCompliancePolicies {
         return
     }
 
-    $dcFolderName = $FolderMap.DeviceCompliance
-    if (-not $dcFolderName) {
-        $dcFolderName = '10. Device Compliance'
+    $filtered = $policies | Where-Object {
+        $odata = $null
+        if ($_.PSObject.Properties.Name -contains '@odata.type') { $odata = $_.'@odata.type' }
+
+        $osMatch  = Test-PolicyMatchesTargetOS -TargetOS $TargetOS -Platforms $null -OdataType $odata
+        $exclude  = Test-ShouldExcludePolicyByName -Name $_.displayName
+
+        $osMatch -and (-not $exclude)
     }
 
-    $exportPath = Join-Path $RootPath $dcFolderName
+    Write-Host "Device Compliance policies to export (after OS filter: $TargetOS): $($filtered.Count)" -ForegroundColor DarkGray
+
+    if (-not $filtered -or $filtered.Count -eq 0) {
+        Write-Host "No Device Compliance policies matched OS filter ($TargetOS)." -ForegroundColor Yellow
+        return
+    }
+
+    $dcFolderName = $FolderMap.DeviceCompliance
+    $exportPath   = Join-Path $OsRootPath $dcFolderName
+
     if (-not (Test-Path -LiteralPath $exportPath)) {
         Write-Host "Creating Device Compliance export folder: $exportPath" -ForegroundColor DarkCyan
         New-Item -ItemType Directory -Path $exportPath -Force | Out-Null
     }
 
-    foreach ($policy in $policies) {
+    foreach ($policy in $filtered) {
         Write-Host "Device Compliance Policy: $($policy.displayName)" -ForegroundColor Yellow
         Export-JsonData -Json $policy -ExportPath $exportPath
     }
 }
 
+# =========================
+# Export catch-all config to 99 (Settings Catalog / Custom / etc.)
+# =========================
+
+function Export-RemainingConfigurationPoliciesTo99 {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object[]]$AllConfigPolicies,
+        [Parameter(Mandatory)][string]$OsRootPath,
+        [Parameter(Mandatory)][string]$TargetOS
+    )
+
+    if (-not $AllConfigPolicies) { return }
+
+    $exportPath = Join-Path (Join-Path $OsRootPath $FolderMap.Other) $UncategorizedSubfolders.ConfigPolicies
+    if (-not (Test-Path -LiteralPath $exportPath)) {
+        New-Item -ItemType Directory -Path $exportPath -Force | Out-Null
+    }
+
+    # Exclude any endpoint security/baseline policies from 99 (even if user didnâ€™t select them)
+    $remaining = $AllConfigPolicies | Where-Object {
+
+        $tmplFam = $null
+        if ($_.templateReference -and $_.templateReference.templateFamily) {
+            $tmplFam = $_.templateReference.templateFamily
+        }
+
+        $isEndpointSecurityFamily = $false
+        if ($tmplFam) { $isEndpointSecurityFamily = $AllEndpointSecurityTemplateFamilies -contains $tmplFam }
+
+        $exclude = Test-ShouldExcludePolicyByName -Name $_.name
+
+        # Ensure we have platforms; if not, GET the policy to retrieve platforms
+        $plat = Get-PlatformsForConfigPolicy -Policy $_
+
+        $osMatch = Test-PolicyMatchesTargetOS -TargetOS $TargetOS -Platforms $plat -OdataType $null
+
+        (-not $isEndpointSecurityFamily) -and (-not $exclude) -and $osMatch
+    }
+
+    Write-Host "ConfigurationPolicies (non-endpoint-security) to export to 99 (OS: $TargetOS): $($remaining.Count)" -ForegroundColor DarkGray
+
+    foreach ($p in $remaining) {
+        Write-Host "99 ConfigPolicy: $($p.name)" -ForegroundColor Yellow
+
+        $settings = $null
+        try {
+            $settings = Get-ConfigurationPolicySettings -PolicyId $p.id
+        }
+        catch {
+            Write-Host "  WARN: Failed to fetch settings for $($p.name): $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+
+        $plat = Get-PlatformsForConfigPolicy -Policy $p
+
+        $json = [PSCustomObject]@{
+            displayName       = $p.name
+            name              = $p.name
+            description       = $p.description
+            platforms         = $plat     # FIX: use repaired platforms
+            technologies      = $p.technologies
+            roleScopeTagIds   = $p.roleScopeTagIds
+            templateReference = $p.templateReference
+            settings          = $settings
+        }
+
+        Export-JsonData -Json $json -ExportPath $exportPath
+    }
+}
+
+function Export-DeviceConfigurationsTo99 {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object[]]$DeviceConfigurations,
+        [Parameter(Mandatory)][string]$OsRootPath,
+        [Parameter(Mandatory)][string]$TargetOS
+    )
+
+    if (-not $DeviceConfigurations) { return }
+
+    $exportPath = Join-Path (Join-Path $OsRootPath $FolderMap.Other) $UncategorizedSubfolders.DeviceConfigurations
+    if (-not (Test-Path -LiteralPath $exportPath)) {
+        New-Item -ItemType Directory -Path $exportPath -Force | Out-Null
+    }
+
+    $filtered = $DeviceConfigurations | Where-Object {
+
+        # Use displayName if present; fallback to name (some objects come back without displayName populated)
+        $n = if ($_.displayName) { $_.displayName } elseif ($_.name) { $_.name } else { '' }
+        $exclude = Test-ShouldExcludePolicyByName -Name $n
+
+        # OS filter via @odata.type (read directly; PSObject.Properties check can fail depending on deserialization)
+        $odata = $_.'@odata.type'
+        $osMatch = Test-PolicyMatchesTargetOS -TargetOS $TargetOS -Platforms $null -OdataType $odata
+
+        (-not $exclude) -and $osMatch
+    }
+
+    Write-Host "DeviceConfigurations to export to 99 (OS: $TargetOS): $($filtered.Count)" -ForegroundColor DarkGray
+
+    foreach ($dc in $filtered) {
+        $n = if ($dc.displayName) { $dc.displayName } elseif ($dc.name) { $dc.name } else { '[no-name]' }
+        Write-Host "99 DeviceConfig: $n" -ForegroundColor Yellow
+        Export-JsonData -Json $dc -ExportPath $exportPath
+    }
+}
 
 # =========================
 # Main orchestrator
@@ -363,7 +646,6 @@ function Export-IntuneEndpointSecurityPolicies {
     # --- resolve selection coming from GUI (or default to all) ---
     $selectedKeys = $Global:IntuneSelectedPolicyKeys
     if (-not $selectedKeys -or $selectedKeys.Count -eq 0) {
-        # running standalone or no GUI selection -> process everything
         $selectedKeys = $AllSelectionKeys
     }
 
@@ -379,8 +661,12 @@ function Export-IntuneEndpointSecurityPolicies {
 
     $includeDeviceCompliance  = $selectedKeys -contains 'DeviceCompliance'
     $includeConditionalAccess = $selectedKeys -contains 'ConditionalAccess'
+    $includeUncategorized     = $selectedKeys -contains 'Uncategorized'
 
-    # Build template families list based on selection
+    # Determine OS scope (from BootStrapper)
+    $targetOS = Get-TargetOS
+
+    # Build template families list based on selection (for 1â€“9 exports)
     $endpointFamilies = New-Object System.Collections.Generic.List[string]
 
     if ($includeAV)                { [void]$endpointFamilies.Add('endpointSecurityAntivirus') }
@@ -397,113 +683,147 @@ function Export-IntuneEndpointSecurityPolicies {
     if ($includeBaseline)          { [void]$endpointFamilies.Add('baseline') }
 
     $doEndpointSecurity = $endpointFamilies.Count -gt 0
+    $doOsScopedExport   = ($doEndpointSecurity -or $includeDeviceCompliance -or $includeUncategorized)
 
     # 1) Connect to Graph
     Connect-IntuneGraph -UseDeviceCode:$UseDeviceCode
 
-    Write-Host "Export root path: $RootPath" -ForegroundColor Cyan
+    Write-Host "Export base root path: $RootPath" -ForegroundColor Cyan
+    Write-Host "Target OS scope: $targetOS" -ForegroundColor Cyan
 
-    # 2) Ensure root export folder exists
+    # 2) Ensure base root exists (Intune_Policy)
     if (-not (Test-Path -LiteralPath $RootPath)) {
-        Write-Host "Creating root export folder: $RootPath" -ForegroundColor DarkCyan
+        Write-Host "Creating base export folder: $RootPath" -ForegroundColor DarkCyan
         New-Item -ItemType Directory -Path $RootPath -Force | Out-Null
     }
 
-    # 3) Pre-create all known subfolders (even if not all are used)
-    Write-Host "Ensuring subfolders exist..." -ForegroundColor Cyan
-    $FolderMap.GetEnumerator() | ForEach-Object {
-        $full = Join-Path $RootPath $_.Value
-        if (-not (Test-Path -LiteralPath $full)) {
-            Write-Host "  Creating: $full" -ForegroundColor DarkCyan
-            New-Item -ItemType Directory -Path $full -Force | Out-Null
+    # Define branch roots
+    $osRoot = $null
+    if ($doOsScopedExport) {
+        $osRoot = Join-Path $RootPath $targetOS
+        if (-not (Test-Path -LiteralPath $osRoot)) {
+            Write-Host "Creating OS export folder: $osRoot" -ForegroundColor DarkCyan
+            New-Item -ItemType Directory -Path $osRoot -Force | Out-Null
         }
-        else {
-            Write-Host "  Exists:   $full" -ForegroundColor DarkGray
+
+        # Pre-create OS-scoped folders (EXCLUDING 11. Conditional Access)
+        Write-Host "Ensuring OS-scoped subfolders exist..." -ForegroundColor Cyan
+        @(
+            $FolderMap.SecurityBaselines,
+            $FolderMap.Antivirus,
+            $FolderMap.DiskEncryption,
+            $FolderMap.Firewall,
+            $FolderMap.EPM,
+            $FolderMap.EDR,
+            $FolderMap.AppControl,
+            $FolderMap.ASR,
+            $FolderMap.AccountProtection,
+            $FolderMap.DeviceCompliance,
+            $FolderMap.Other
+        ) | ForEach-Object {
+            $full = Join-Path $osRoot $_
+            if (-not (Test-Path -LiteralPath $full)) {
+                New-Item -ItemType Directory -Path $full -Force | Out-Null
+            }
+        }
+
+        # Pre-create 99 subfolders
+        foreach ($sub in $UncategorizedSubfolders.Values) {
+            $full = Join-Path (Join-Path $osRoot $FolderMap.Other) $sub
+            if (-not (Test-Path -LiteralPath $full)) {
+                New-Item -ItemType Directory -Path $full -Force | Out-Null
+            }
         }
     }
 
-    # 4) Endpoint Security / Baselines
-    if ($doEndpointSecurity) {
-        Write-Host "Fetching configuration policies (unified platform)..." -ForegroundColor Cyan
-        $allPolicies = Get-EndpointSecurityConfigurationPolicies
-        Write-Host "Total configurationPolicies returned: $($allPolicies.Count)" -ForegroundColor DarkGray
-
-        if (-not $allPolicies) {
-            Write-Host "No configurationPolicies found. Nothing to export for Endpoint Security/Baselines." -ForegroundColor Yellow
+    $caRoot = $null
+    if ($includeConditionalAccess) {
+        $caRoot = Join-Path $RootPath 'Conditional_Access'
+        if (-not (Test-Path -LiteralPath $caRoot)) {
+            New-Item -ItemType Directory -Path $caRoot -Force | Out-Null
         }
-        else {
-            $policies = $allPolicies | Where-Object {
-                $_.templateReference -and
-                $_.templateReference.templateFamily -in $endpointFamilies
+    }
+
+    # Cache these once; reuse for endpoint security and 99 exports
+    $allConfigPolicies = Get-ConfigurationPolicies
+    Write-Host "Total configurationPolicies returned: $($allConfigPolicies.Count)" -ForegroundColor DarkGray
+
+    # 3) Endpoint Security / Baselines (OS scoped, folders 1â€“9)
+    if ($doEndpointSecurity) {
+
+        $policies = $allConfigPolicies | Where-Object {
+            $_.templateReference -and $_.templateReference.templateFamily -in $endpointFamilies
+        }
+
+        # STRICT OS filter (with platform repair)
+        $policies = $policies | Where-Object {
+            $plat = Get-PlatformsForConfigPolicy -Policy $_
+            Test-PolicyMatchesTargetOS -TargetOS $targetOS -Platforms $plat -OdataType $null
+        }
+
+        # Exclude onboarding/autopatch by name
+        $policies = $policies | Where-Object {
+            -not (Test-ShouldExcludePolicyByName -Name $_.name)
+        }
+
+        Write-Host "Endpoint Security / Baseline policies to export (after selection + OS filter): $($policies.Count)" -ForegroundColor DarkGray
+
+        foreach ($policy in $policies) {
+            $tmplRef  = $policy.templateReference
+            $settings = Get-ConfigurationPolicySettings -PolicyId $policy.id
+
+            $plat = Get-PlatformsForConfigPolicy -Policy $policy
+
+            $json = [PSCustomObject]@{
+                displayName             = $policy.name
+                name                    = $policy.name
+                description             = $policy.description
+                platforms               = $plat
+                technologies            = $policy.technologies
+                roleScopeTagIds         = $policy.roleScopeTagIds
+
+                TemplateFamily          = $tmplRef.templateFamily
+                TemplateDisplayName     = $tmplRef.templateDisplayName
+                TemplateId              = $tmplRef.templateId
+                TemplateDisplayVersion  = $tmplRef.templateDisplayVersion
+
+                templateReference       = $tmplRef
+                settings                = $settings
             }
 
-            Write-Host "Endpoint Security / Baseline policies to export (after selection filter): $($policies.Count)" -ForegroundColor DarkGray
+            $subFolderName = Get-PolicyFolderForTemplate -TemplateFamily $tmplRef.templateFamily -TemplateDisplayName $tmplRef.templateDisplayName
+            $exportPath    = Join-Path $osRoot $subFolderName
 
-            if (-not $policies -or $policies.Count -eq 0) {
-                Write-Host "No Endpoint Security or Baseline policies match the selected categories." -ForegroundColor Yellow
-            }
-            else {
-                foreach ($policy in $policies) {
-                    $policyId      = $policy.id
-                    $name          = $policy.name
-                    $description   = $policy.description
-                    $platforms     = $policy.platforms
-                    $technologies  = $policy.technologies
-                    $roleScopeTags = $policy.roleScopeTagIds
-                    $tmplRef       = $policy.templateReference
-
-                    $templateFamily        = $tmplRef.templateFamily
-                    $templateDisplayName   = $tmplRef.templateDisplayName
-                    $templateDisplayVer    = $tmplRef.templateDisplayVersion
-                    $templateId            = $tmplRef.templateId
-
-                    Write-Host ""
-                    Write-Host "Policy:   $name" -ForegroundColor Yellow
-                    Write-Host "Family:   $templateFamily" -ForegroundColor Gray
-                    Write-Host "Template: $templateDisplayName ($templateId)" -ForegroundColor Gray
-
-                    $settings = Get-ConfigurationPolicySettings -PolicyId $policyId
-
-                    $json = [PSCustomObject]@{
-                        displayName             = $name
-                        name                    = $name
-                        description             = $description
-                        platforms               = $platforms
-                        technologies            = $technologies
-                        roleScopeTagIds         = $roleScopeTags
-
-                        TemplateFamily          = $templateFamily
-                        TemplateDisplayName     = $templateDisplayName
-                        TemplateId              = $templateId
-                        TemplateDisplayVersion  = $templateDisplayVer
-
-                        templateReference       = $tmplRef
-                        settings                = $settings
-                    }
-
-                    $subFolderName = Get-PolicyFolderForTemplate -TemplateFamily $templateFamily -TemplateDisplayName $templateDisplayName
-                    $exportPath    = Join-Path $RootPath $subFolderName
-
-                    Export-JsonData -Json $json -ExportPath $exportPath
-                }
-            }
+            Export-JsonData -Json $json -ExportPath $exportPath
         }
     }
     else {
-        Write-Host "No Endpoint Security / Baseline categories selected. Skipping configurationPolicies export." -ForegroundColor Yellow
+        Write-Host "No Endpoint Security / Baseline categories selected. Skipping configurationPolicies export (1-9)." -ForegroundColor DarkGray
     }
 
-    # 5) Device Compliance
+    # 4) Device Compliance (OS scoped, folder 10)
     if ($includeDeviceCompliance) {
-        Export-DeviceCompliancePolicies -RootPath $RootPath
+        Export-DeviceCompliancePolicies -OsRootPath $osRoot -TargetOS $targetOS
     }
     else {
         Write-Host "Device Compliance not selected. Skipping." -ForegroundColor DarkGray
     }
 
-    # 6) Conditional Access
+    # 5) Catch-all export to 99 (OS scoped)
+    if ($includeUncategorized) {
+        Export-RemainingConfigurationPoliciesTo99 -AllConfigPolicies $allConfigPolicies -OsRootPath $osRoot -TargetOS $targetOS
+
+        $deviceConfigurations = Get-DeviceConfigurations
+        Write-Host "Total deviceConfigurations returned: $($deviceConfigurations.Count)" -ForegroundColor DarkGray
+        Export-DeviceConfigurationsTo99 -DeviceConfigurations $deviceConfigurations -OsRootPath $osRoot -TargetOS $targetOS
+    }
+    else {
+        Write-Host "Uncategorized not selected. Skipping 99 catch-all exports." -ForegroundColor DarkGray
+    }
+
+    # 6) Conditional Access (separate branch, NOT OS scoped)
     if ($includeConditionalAccess) {
-        Export-ConditionalAccessPolicies -RootPath $RootPath
+        Export-ConditionalAccessPolicies -ConditionalAccessRoot $caRoot
     }
     else {
         Write-Host "Conditional Access not selected. Skipping." -ForegroundColor DarkGray
@@ -513,7 +833,6 @@ function Export-IntuneEndpointSecurityPolicies {
     Write-Host "Export complete." -ForegroundColor Cyan
 }
 
-
 #########################################
-### BootStrapper / direct entry point
+### Entry point
 Export-IntuneEndpointSecurityPolicies -RootPath $ExportRootPath -UseDeviceCode:$UseDeviceCode
