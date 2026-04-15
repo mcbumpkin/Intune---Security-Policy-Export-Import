@@ -16,11 +16,11 @@ param(
 # =========================
 # Resolve ExportRootPath
 # =========================
-# NEW ROOT: Intune_Policy (instead of Export)
+# Export root: Exported_Policies
 if (-not $ExportRootPath) {
     if ($Global:IntuneToolRoot) {
         # Preferred: tool root from BootStrapper
-        $ExportRootPath = Join-Path $Global:IntuneToolRoot 'Intune_Policy'
+        $ExportRootPath = Join-Path $Global:IntuneToolRoot 'Exported_Policies'
     }
     else {
         # Final fallback: local script-based resolution
@@ -29,10 +29,10 @@ if (-not $ExportRootPath) {
         if ($scriptPath) {
             $scriptDir      = Split-Path -Parent $scriptPath
             # Scripts\MSGraph-Export.ps1 -> tool root = parent of Scripts
-            $ExportRootPath = Join-Path (Split-Path -Parent $scriptDir) 'Intune_Policy'
+            $ExportRootPath = Join-Path (Split-Path -Parent $scriptDir) 'Exported_Policies'
         }
         else {
-            $ExportRootPath = Join-Path (Get-Location).Path 'Intune_Policy'
+            $ExportRootPath = Join-Path (Get-Location).Path 'Exported_Policies'
         }
     }
 }
@@ -41,7 +41,7 @@ if (-not $ExportRootPath) {
 # Config: Folders & Scopes
 # =========================
 
-# Folder names (your 1–11 + 99 structure)
+# Folder names (your 1â€“11 + 99 structure)
 # NOTE: 11 is exported under Conditional_Access (separate branch)
 $FolderMap = @{
     SecurityBaselines   = '1. Security Baselines'
@@ -544,7 +544,7 @@ function Export-RemainingConfigurationPoliciesTo99 {
         New-Item -ItemType Directory -Path $exportPath -Force | Out-Null
     }
 
-    # Exclude any endpoint security/baseline policies from 99 (even if user didn’t select them)
+    # Exclude any endpoint security/baseline policies from 99 (even if user didnâ€™t select them)
     $remaining = $AllConfigPolicies | Where-Object {
 
         $tmplFam = $null
@@ -666,7 +666,7 @@ function Export-IntuneEndpointSecurityPolicies {
     # Determine OS scope (from BootStrapper)
     $targetOS = Get-TargetOS
 
-    # Build template families list based on selection (for 1–9 exports)
+    # Build template families list based on selection (for 1â€“9 exports)
     $endpointFamilies = New-Object System.Collections.Generic.List[string]
 
     if ($includeAV)                { [void]$endpointFamilies.Add('endpointSecurityAntivirus') }
@@ -691,7 +691,7 @@ function Export-IntuneEndpointSecurityPolicies {
     Write-Host "Export base root path: $RootPath" -ForegroundColor Cyan
     Write-Host "Target OS scope: $targetOS" -ForegroundColor Cyan
 
-    # 2) Ensure base root exists (Intune_Policy)
+    # 2) Ensure base root exists (Exported_Policies)
     if (-not (Test-Path -LiteralPath $RootPath)) {
         Write-Host "Creating base export folder: $RootPath" -ForegroundColor DarkCyan
         New-Item -ItemType Directory -Path $RootPath -Force | Out-Null
@@ -748,7 +748,7 @@ function Export-IntuneEndpointSecurityPolicies {
     $allConfigPolicies = Get-ConfigurationPolicies
     Write-Host "Total configurationPolicies returned: $($allConfigPolicies.Count)" -ForegroundColor DarkGray
 
-    # 3) Endpoint Security / Baselines (OS scoped, folders 1–9)
+    # 3) Endpoint Security / Baselines (OS scoped, folders 1â€“9)
     if ($doEndpointSecurity) {
 
         $policies = $allConfigPolicies | Where-Object {

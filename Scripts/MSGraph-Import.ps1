@@ -29,7 +29,7 @@ if (-not $ImportRootPath) {
     }
     # 3) Tool root fallback
     elseif ($Global:IntuneToolRoot) {
-        $ImportRootPath = Join-Path $Global:IntuneToolRoot 'Intune_Policy'
+        $ImportRootPath = Join-Path $Global:IntuneToolRoot 'Exported_Policies'
     }
     else {
         # Final fallback: local script-based resolution
@@ -37,10 +37,10 @@ if (-not $ImportRootPath) {
         if ($scriptPath) {
             $scriptDir      = Split-Path -Parent $scriptPath
             # Scripts\MSGraph-Import.ps1 -> tool root = parent of Scripts
-            $ImportRootPath = Join-Path (Split-Path -Parent $scriptDir) 'Intune_Policy'
+            $ImportRootPath = Join-Path (Split-Path -Parent $scriptDir) 'Exported_Policies'
         }
         else {
-            $ImportRootPath = Join-Path (Get-Location).Path 'Intune_Policy'
+            $ImportRootPath = Join-Path (Get-Location).Path 'Exported_Policies'
         }
     }
 }
@@ -57,8 +57,8 @@ $FolderNames = @{
     EPM                 = '5. Endpoint Privilege Management'
     EDR                 = '6. Endpoint Detection and Response'
     AppControl          = '7. App Control for Business'
-    ASR                 = '8. Attack surface reduction'
-    AccountProtection   = '9. Account protection'
+    ASR                 = '8. Attack Surface Reduction'
+    AccountProtection   = '9. Account Protection'
     DeviceCompliance    = '10. Device Compliance'
     ConditionalAccess   = '11. Conditional Access'
     Uncategorized       = '99. Uncategorized'
@@ -523,6 +523,62 @@ function Import-ConditionalAccessPolicyFromFile {
     }
 }
 
+function Remove-WorkingImportIfAppropriate {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ImportedRootPath
+    )
+
+    $workingRoot = $null
+
+    if ($Global:IntuneWorkingImportRoot) {
+        $workingRoot = $Global:IntuneWorkingImportRoot
+    }
+    elseif ($Global:IntuneToolRoot) {
+        $workingRoot = Join-Path $Global:IntuneToolRoot 'Working_Import'
+    }
+    else {
+        $scriptPath = $MyInvocation.MyCommand.Path
+        if ($scriptPath) {
+            $scriptDir    = Split-Path -Parent $scriptPath
+            $toolRoot     = Split-Path -Parent $scriptDir
+            $workingRoot  = Join-Path $toolRoot 'Working_Import'
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($workingRoot)) {
+        Write-Host "Working_Import cleanup path could not be resolved. Leaving staged files in place." -ForegroundColor DarkYellow
+        return
+    }
+
+    try {
+        $resolvedImported = [System.IO.Path]::GetFullPath($ImportedRootPath)
+        $resolvedWorking  = [System.IO.Path]::GetFullPath($workingRoot)
+    }
+    catch {
+        Write-Host "Could not normalize Working_Import cleanup paths. Leaving staged files in place." -ForegroundColor DarkYellow
+        return
+    }
+
+    if ($resolvedImported -ne $resolvedWorking) {
+        Write-Host "Import root is not Working_Import. No staged cleanup needed." -ForegroundColor DarkGray
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $resolvedWorking)) {
+        Write-Host "Working_Import path '$resolvedWorking' not found. Nothing to clean up." -ForegroundColor DarkGray
+        return
+    }
+
+    try {
+        Remove-Item -LiteralPath $resolvedWorking -Recurse -Force -ErrorAction Stop
+        Write-Host "Removed Working_Import after successful import: $resolvedWorking" -ForegroundColor DarkGreen
+    }
+    catch {
+        Write-Host "Failed to remove Working_Import '$resolvedWorking': $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
+}
+
 # =========================
 # Main orchestrator
 # =========================
@@ -674,4 +730,24 @@ function Import-IntuneSecurityFromExport {
 
 #########################################
 ### BootStrapper
-Import-IntuneSecurityFromExport -RootPath $ImportRootPath -UseDeviceCode:$UseDeviceCode
+$importSucceeded = $false
+
+try {
+    Import-IntuneSecurityFromExport -RootPath $ImportRootPath -UseDeviceCode:$UseDeviceCode
+    $importSucceeded = $true
+}
+finally {
+    try {
+        Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+    }
+    catch {
+        # Ignore disconnect cleanup errors
+    }
+
+    if ($importSucceeded) {
+        Remove-WorkingImportIfAppropriate -ImportedRootPath $ImportRootPath
+    }
+    else {
+        Write-Host "Import did not complete successfully. Working_Import is being retained for review." -ForegroundColor DarkYellow
+    }
+}

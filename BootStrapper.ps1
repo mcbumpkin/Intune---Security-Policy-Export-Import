@@ -45,28 +45,35 @@ function Show-ConsoleWindow {
 # Hide console while GUI is active
 Hide-ConsoleWindow
 
+
 #-----------------------------------------
 # Global roots (shared with child scripts)
 #-----------------------------------------
-$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$projectRoot = if ($PSScriptRoot) {
+    $PSScriptRoot
+}
+elseif ($MyInvocation.MyCommand.Path) {
+    Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+else {
+    (Get-Location).Path
+}
 
-$Global:IntuneToolRoot     = $scriptRoot
-$Global:IntuneScriptsRoot  = Join-Path $Global:IntuneToolRoot 'Scripts'
-$Global:IntuneExportRoot   = Join-Path $Global:IntuneToolRoot 'Intune_Policy'  # NEW ROOT (was Export)
-$Global:IntuneBaselineRoot = Join-Path $Global:IntuneToolRoot 'Baseline_Policies'  # Baseline root (mirrors Intune_Policy structure)
+$Global:IntuneToolRoot          = $projectRoot
+$Global:IntuneScriptsRoot       = Join-Path $Global:IntuneToolRoot 'Scripts'
+$Global:IntuneExportRoot        = Join-Path $Global:IntuneToolRoot 'Exported_Policies'
+$Global:IntuneBaselineRoot      = Join-Path $Global:IntuneToolRoot 'Baseline_Policies'
+$Global:IntuneWorkingImportRoot = Join-Path $Global:IntuneToolRoot 'Working_Import'
 
 #========================================================================
-# Ensure expected folder structure exists
+# Ensure required folder structure exists
 #========================================================================
-$Global:IntuneLogsRoot   = Join-Path $Global:IntuneToolRoot 'Logs'
+$null = New-Item -Path $Global:IntuneScriptsRoot       -ItemType Directory -Force -ErrorAction SilentlyContinue
+$null = New-Item -Path $Global:IntuneBaselineRoot      -ItemType Directory -Force -ErrorAction SilentlyContinue
 
-$null = New-Item -Path $Global:IntuneScriptsRoot -ItemType Directory -Force -ErrorAction SilentlyContinue
-$null = New-Item -Path $Global:IntuneExportRoot  -ItemType Directory -Force -ErrorAction SilentlyContinue
-$null = New-Item -Path $Global:IntuneBaselineRoot -ItemType Directory -Force -ErrorAction SilentlyContinue
-$null = New-Item -Path $Global:IntuneLogsRoot    -ItemType Directory -Force -ErrorAction SilentlyContinue
-
-$exportScript = Join-Path $Global:IntuneScriptsRoot 'MSGraph-Export.ps1'
-$importScript = Join-Path $Global:IntuneScriptsRoot 'MSGraph-Import.ps1'
+$exportScript  = Join-Path $Global:IntuneScriptsRoot 'MSGraph-Export.ps1'
+$importScript  = Join-Path $Global:IntuneScriptsRoot 'MSGraph-Import.ps1'
+$renamerScript = Join-Path $Global:IntuneScriptsRoot 'JSON-PolicyRenamer.ps1'
 
 #-------------------------
 # Policy Definitions (GUI list)
@@ -89,9 +96,10 @@ $Global:IntuneTargetOS = $null
 $Global:IntuneSelectedPolicyKeys = @()
 $Global:IntuneImportSource = 'MostRecent'   # MostRecent | Baseline
 $Global:IntuneImportRoot   = $Global:IntuneExportRoot
+$Global:IntuneCustomerPrefix = $null
 
 # -------------------------
-# Start Page – Scope selection
+# Start Page Scope selection
 # -------------------------
 function Show-PolicyScopeSelectionForm {
     $script:selectedScope = $null
@@ -156,7 +164,7 @@ function Show-PolicyScopeSelectionForm {
 }
 
 # -------------------------
-# Form – OS selection (with Back)
+# Form OS selection (with Back)
 # -------------------------
 function Show-OSSelectionForm {
     # reset selection each time the form is shown
@@ -233,7 +241,7 @@ function Show-OSSelectionForm {
 }
 
 #-------------------------
-# Form – Export / Import
+# Form Export / Import
 #-------------------------
 function Show-MainSelectionForm {
     param(
@@ -319,7 +327,7 @@ function Show-MainSelectionForm {
 
 
 #-------------------------
-# Form – Import Source
+# Form Import Source
 #-------------------------
 function Show-ImportSourceSelectionForm {
     param(
@@ -349,7 +357,7 @@ function Show-ImportSourceSelectionForm {
     $rbBaseline.AutoSize  = $true
 
     $rbMostRecent         = New-Object System.Windows.Forms.RadioButton
-    $rbMostRecent.Text    = 'Most Recent Export (Intune_Policy)'
+    $rbMostRecent.Text    = 'Most Recent Export (Exported_Policies)'
     $rbMostRecent.Location= New-Object System.Drawing.Point(20,70)
     $rbMostRecent.AutoSize= $true
 
@@ -405,17 +413,18 @@ function Show-ImportSourceSelectionForm {
 
 
 #--------------------------
-# Form – Policy selection
+# Form Policy selection
 #--------------------------
 function Show-PolicySelectionForm {
     param(
         [Parameter(Mandatory)]
         [string]$Action,
 
-        [string[]]$ExcludeKeys = @()
+        [string[]]$ExcludeKeys = @(),
+
+        [string[]]$InitialSelectedKeys = @()
     )
 
-    # reset global + script state each time
     $Global:IntuneSelectedPolicyKeys = @()
     $script:result       = 'Cancel'
     $script:selectedKeys = @()
@@ -442,13 +451,19 @@ function Show-PolicySelectionForm {
 
     foreach ($p in $Global:IntunePolicyDefinitions) {
         if ($ExcludeKeys -and ($ExcludeKeys -contains $p.Key)) { continue }
-        [void]$clbPolicies.Items.Add($p)
+        $idx = $clbPolicies.Items.Add($p)
+        if ($InitialSelectedKeys -contains $p.Key) {
+            $clbPolicies.SetItemChecked($idx, $true)
+        }
     }
 
     $chkSelectAll               = New-Object System.Windows.Forms.CheckBox
     $chkSelectAll.Text          = 'Select all'
     $chkSelectAll.AutoSize      = $true
     $chkSelectAll.Location      = New-Object System.Drawing.Point(15,285)
+    if ($clbPolicies.Items.Count -gt 0 -and $clbPolicies.CheckedItems.Count -eq $clbPolicies.Items.Count) {
+        $chkSelectAll.Checked = $true
+    }
 
     $groupBox.Controls.Add($clbPolicies)
     $groupBox.Controls.Add($chkSelectAll)
@@ -459,7 +474,7 @@ function Show-PolicySelectionForm {
     $btnBack.Size          = New-Object System.Drawing.Size(80,30)
 
     $btnProcess            = New-Object System.Windows.Forms.Button
-    $btnProcess.Text       = 'Process'
+    $btnProcess.Text       = if ($Action -eq 'Import') { 'Next' } else { 'Process' }
     $btnProcess.Location   = New-Object System.Drawing.Point(365,350)
     $btnProcess.Size       = New-Object System.Drawing.Size(80,30)
 
@@ -471,6 +486,14 @@ function Show-PolicySelectionForm {
         for ($i = 0; $i -lt $clbPolicies.Items.Count; $i++) {
             $clbPolicies.SetItemChecked($i, $chkSelectAll.Checked)
         }
+    })
+
+    $clbPolicies.Add_ItemCheck({
+        $form.BeginInvoke([Action]{
+            if ($clbPolicies.Items.Count -gt 0) {
+                $chkSelectAll.Checked = ($clbPolicies.CheckedItems.Count -eq $clbPolicies.Items.Count)
+            }
+        }) | Out-Null
     })
 
     $btnBack.Add_Click({
@@ -505,15 +528,121 @@ function Show-PolicySelectionForm {
     [void]$form.ShowDialog()
 
     return [pscustomobject]@{
-        Result       = $script:result      # 'Back' | 'Process' | 'Cancel'
+        Result       = $script:result
         SelectedKeys = $script:selectedKeys
+    }
+}
+
+function Show-PrefixDeclarationForm {
+    param(
+        [string]$InitialPrefix = ''
+    )
+
+    $script:result = 'Cancel'
+    $script:prefix = $InitialPrefix
+
+    $form                  = New-Object System.Windows.Forms.Form
+    $form.Text             = 'Set Prefix Declaration'
+    $form.StartPosition    = 'CenterScreen'
+    $form.Size             = New-Object System.Drawing.Size(520,250)
+    $form.FormBorderStyle  = 'FixedDialog'
+    $form.MaximizeBox      = $false
+    $form.MinimizeBox      = $false
+    $form.TopMost          = $true
+
+    $groupBox              = New-Object System.Windows.Forms.GroupBox
+    $groupBox.Text         = 'Customer Prefix'
+    $groupBox.Location     = New-Object System.Drawing.Point(15,15)
+    $groupBox.Size         = New-Object System.Drawing.Size(470,135)
+
+    $label                 = New-Object System.Windows.Forms.Label
+    $label.Text            = 'Enter customer prefix'
+    $label.Location        = New-Object System.Drawing.Point(20,30)
+    $label.Size            = New-Object System.Drawing.Size(200,20)
+
+    $textBox               = New-Object System.Windows.Forms.TextBox
+    $textBox.Location      = New-Object System.Drawing.Point(20,55)
+    $textBox.Size          = New-Object System.Drawing.Size(420,23)
+    $textBox.Text          = $script:prefix
+
+    $preview               = New-Object System.Windows.Forms.Label
+    $preview.Location      = New-Object System.Drawing.Point(20,90)
+    $preview.Size          = New-Object System.Drawing.Size(420,25)
+
+    $btnBack               = New-Object System.Windows.Forms.Button
+    $btnBack.Text          = 'Back'
+    $btnBack.Location      = New-Object System.Drawing.Point(270,170)
+    $btnBack.Size          = New-Object System.Drawing.Size(80,30)
+
+    $btnProcess            = New-Object System.Windows.Forms.Button
+    $btnProcess.Text       = 'Process'
+    $btnProcess.Location   = New-Object System.Drawing.Point(365,170)
+    $btnProcess.Size       = New-Object System.Drawing.Size(80,30)
+
+    $groupBox.Controls.Add($label)
+    $groupBox.Controls.Add($textBox)
+    $groupBox.Controls.Add($preview)
+
+    $form.Controls.Add($groupBox)
+    $form.Controls.Add($btnBack)
+    $form.Controls.Add($btnProcess)
+
+    $updatePreview = {
+        $prefixText = $textBox.Text.Trim()
+        if ([string]::IsNullOrWhiteSpace($prefixText)) {
+            $preview.Text = 'Format: <Prefix> - <Policy Name>'
+        }
+        else {
+            $preview.Text = "Format: $prefixText - <Policy Name>"
+        }
+    }
+
+    $textBox.Add_TextChanged($updatePreview)
+
+    $btnBack.Add_Click({
+        $script:prefix = $textBox.Text.Trim()
+        $script:result = 'Back'
+        $form.Close()
+    })
+
+    $btnProcess.Add_Click({
+        $prefixText = $textBox.Text.Trim()
+
+        if ([string]::IsNullOrWhiteSpace($prefixText)) {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Please enter a customer prefix.",
+                "Prefix required",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            ) | Out-Null
+            return
+        }
+
+        $Global:IntuneCustomerPrefix = $prefixText
+        $script:prefix = $prefixText
+        $script:result = 'Process'
+        $form.Close()
+    })
+
+    $form.Add_Shown({
+        & $updatePreview
+        $form.Activate()
+        $form.BringToFront()
+        $textBox.Focus()
+    })
+
+    [void]$form.ShowDialog()
+
+    return [pscustomobject]@{
+        Result = $script:result
+        Prefix = $script:prefix
     }
 }
 
 #-------------------------
 # Main flow
 # Start -> (1) Intune Security Policies -> OS -> Export/Import -> Policy selection -> Run
-#      -> (2) Conditional Access Policies -> Export/Import -> Run (auto selects 11)
+#       -> (2) Conditional Access Policies -> Export/Import -> Run (auto selects 11)
 #-------------------------
 
 while ($true) {
@@ -522,7 +651,6 @@ while ($true) {
     if (-not $scope) { exit }
 
     if ($scope -eq 'IntuneSecurity') {
-        # OS loop (Back returns to Start Page)
         while ($true) {
             $osChoice = Show-OSSelectionForm
             if (-not $osChoice) { exit }
@@ -530,131 +658,185 @@ while ($true) {
 
             $Global:IntuneTargetOS = $osChoice
 
-            # Action loop (Back returns to OS selection)
             while ($true) {
                 $action = Show-MainSelectionForm -Scope 'IntuneSecurity'
                 if (-not $action) { exit }
 
                 if ($action -eq 'Back') {
-                    # Back to OS selector
                     break
                 }
 
+                # Reset per-run state
+                $Global:IntuneSelectedPolicyKeys = @()
+                $Global:IntuneCustomerPrefix     = $null
 
                 if ($action -eq 'Import') {
                     $importSource = Show-ImportSourceSelectionForm -Scope 'IntuneSecurity'
                     if (-not $importSource) { exit }
 
                     if ($importSource -eq 'Back') {
-                        # Back to action selector
                         continue
                     }
 
                     $Global:IntuneImportSource = $importSource
-                    $Global:IntuneImportRoot   = if ($importSource -eq 'Baseline') { $Global:IntuneBaselineRoot } else { $Global:IntuneExportRoot }
+                    $Global:IntuneImportRoot   = if ($importSource -eq 'Baseline') {
+                        $Global:IntuneBaselineRoot
+                    }
+                    else {
+                        $Global:IntuneExportRoot
+                    }
                 }
                 else {
-                    # For export runs, always use Intune_Policy as the working root
                     $Global:IntuneImportSource = 'MostRecent'
                     $Global:IntuneImportRoot   = $Global:IntuneExportRoot
                 }
 
-                # Policy selection
                 $exclude = @()
                 if ($action -eq 'Export') {
-                    # Requirement: remove option 11 from Export list selector when using Intune Security Policies path
                     $exclude += 'ConditionalAccess'
                 }
 
-                $selectionResult = Show-PolicySelectionForm -Action $action -ExcludeKeys $exclude
-                if (-not $selectionResult -or $selectionResult.Result -eq 'Cancel') { exit }
+                $selectedKeys = @()
+                $prefixValue  = ''
 
-                switch ($selectionResult.Result) {
-                    'Back' {
-                        # Back to action selector
+                while ($true) {
+                    $selectionResult = Show-PolicySelectionForm `
+                        -Action $action `
+                        -ExcludeKeys $exclude `
+                        -InitialSelectedKeys $selectedKeys
+
+                    if (-not $selectionResult -or $selectionResult.Result -eq 'Cancel') { exit }
+
+                    if ($selectionResult.Result -eq 'Back') {
                         $Global:IntuneSelectedPolicyKeys = @()
+                        $Global:IntuneCustomerPrefix     = $null
+                        continue 2
+                    }
+
+                    $selectedKeys = @($Global:IntuneSelectedPolicyKeys)
+
+                    if (-not $selectedKeys -or $selectedKeys.Count -eq 0) {
+                        [System.Windows.Forms.MessageBox]::Show(
+                            "No policy categories selected. Aborting.",
+                            "Nothing to process",
+                            [System.Windows.Forms.MessageBoxButtons]::OK,
+                            [System.Windows.Forms.MessageBoxIcon]::Warning
+                        ) | Out-Null
                         continue
                     }
-                    'Process' {
-                        if (-not $Global:IntuneSelectedPolicyKeys -or $Global:IntuneSelectedPolicyKeys.Count -eq 0) {
-                            [System.Windows.Forms.MessageBox]::Show(
-                                "No policy categories selected. Aborting.",
-                                "Nothing to process",
-                                [System.Windows.Forms.MessageBoxButtons]::OK,
-                                [System.Windows.Forms.MessageBoxIcon]::Warning
-                            ) | Out-Null
-                            break
+
+                    if ($action -eq 'Import') {
+                        $prefixResult = Show-PrefixDeclarationForm -InitialPrefix $prefixValue
+                        if (-not $prefixResult -or $prefixResult.Result -eq 'Cancel') { exit }
+
+                        if ($prefixResult.Result -eq 'Back') {
+                            $prefixValue = $prefixResult.Prefix
+                            continue
                         }
 
-                        Show-ConsoleWindow
-
-                        switch ($action) {
-                            'Export' {
-                                if (Test-Path $exportScript) {
-                                    & $exportScript
-                                } else {
-                                    [System.Windows.Forms.MessageBox]::Show(
-                                        "Export script not found at:`n$exportScript",
-                                        "Script missing",
-                                        [System.Windows.Forms.MessageBoxButtons]::OK,
-                                        [System.Windows.Forms.MessageBoxIcon]::Error
-                                    ) | Out-Null
-                                }
-                            }
-                            'Import' {
-                                if (Test-Path $importScript) {
-                                    & $importScript
-                                } else {
-                                    [System.Windows.Forms.MessageBox]::Show(
-                                        "Import script not found at:`n$importScript",
-                                        "Script missing",
-                                        [System.Windows.Forms.MessageBoxButtons]::OK,
-                                        [System.Windows.Forms.MessageBoxIcon]::Error
-                                    ) | Out-Null
-                                }
-                            }
-                        }
-
-                        exit
+                        $prefixValue = $prefixResult.Prefix
+                        $Global:IntuneCustomerPrefix = $prefixValue
                     }
+                    else {
+                        $Global:IntuneCustomerPrefix = $null
+                    }
+
+                    Show-ConsoleWindow
+
+                    switch ($action) {
+                        'Export' {
+                            if (Test-Path $exportScript) {
+                                & $exportScript
+                            }
+                            else {
+                                [System.Windows.Forms.MessageBox]::Show(
+                                    "Export script not found at:`n$exportScript",
+                                    "Script missing",
+                                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                                    [System.Windows.Forms.MessageBoxIcon]::Error
+                                ) | Out-Null
+                            }
+                        }
+
+                        'Import' {
+                            if ([string]::IsNullOrWhiteSpace($Global:IntuneCustomerPrefix)) {
+                                [System.Windows.Forms.MessageBox]::Show(
+                                    "Customer prefix is missing. Cannot continue with staged import.",
+                                    "Prefix missing",
+                                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                                ) | Out-Null
+                                Hide-ConsoleWindow
+                                continue
+                            }
+
+                            if (-not (Test-Path $renamerScript)) {
+                                [System.Windows.Forms.MessageBox]::Show(
+                                    "Renamer script not found at:`n$renamerScript",
+                                    "Script missing",
+                                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                                    [System.Windows.Forms.MessageBoxIcon]::Error
+                                ) | Out-Null
+                                Hide-ConsoleWindow
+                                continue
+                            }
+
+                            if (-not (Test-Path $importScript)) {
+                                [System.Windows.Forms.MessageBox]::Show(
+                                    "Import script not found at:`n$importScript",
+                                    "Script missing",
+                                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                                    [System.Windows.Forms.MessageBoxIcon]::Error
+                                ) | Out-Null
+                                Hide-ConsoleWindow
+                                continue
+                            }
+
+                            & $renamerScript
+                            & $importScript
+                        }
+                    }
+
+                    exit
                 }
             }
         }
 
-        # Returned to Start Page
         continue
     }
 
     if ($scope -eq 'ConditionalAccess') {
-        # CA path -> action selector -> auto select ConditionalAccess (11)
         while ($true) {
             $action = Show-MainSelectionForm -Scope 'ConditionalAccess'
             if (-not $action) { exit }
 
             if ($action -eq 'Back') {
-                # Back to Start Page
                 break
             }
+
+            $Global:IntuneSelectedPolicyKeys = @('ConditionalAccess')
+            $Global:IntuneCustomerPrefix     = $null
 
             if ($action -eq 'Import') {
                 $importSource = Show-ImportSourceSelectionForm -Scope 'ConditionalAccess'
                 if (-not $importSource) { exit }
 
                 if ($importSource -eq 'Back') {
-                    # Back to action selector
                     continue
                 }
 
                 $Global:IntuneImportSource = $importSource
-                $Global:IntuneImportRoot   = if ($importSource -eq 'Baseline') { $Global:IntuneBaselineRoot } else { $Global:IntuneExportRoot }
+                $Global:IntuneImportRoot   = if ($importSource -eq 'Baseline') {
+                    $Global:IntuneBaselineRoot
+                }
+                else {
+                    $Global:IntuneExportRoot
+                }
             }
             else {
                 $Global:IntuneImportSource = 'MostRecent'
                 $Global:IntuneImportRoot   = $Global:IntuneExportRoot
             }
-
-            # Auto-select CA (11) because this path implies Conditional Access
-            $Global:IntuneSelectedPolicyKeys = @('ConditionalAccess')
 
             Show-ConsoleWindow
 
@@ -662,7 +844,8 @@ while ($true) {
                 'Export' {
                     if (Test-Path $exportScript) {
                         & $exportScript
-                    } else {
+                    }
+                    else {
                         [System.Windows.Forms.MessageBox]::Show(
                             "Export script not found at:`n$exportScript",
                             "Script missing",
@@ -671,10 +854,12 @@ while ($true) {
                         ) | Out-Null
                     }
                 }
+
                 'Import' {
                     if (Test-Path $importScript) {
                         & $importScript
-                    } else {
+                    }
+                    else {
                         [System.Windows.Forms.MessageBox]::Show(
                             "Import script not found at:`n$importScript",
                             "Script missing",

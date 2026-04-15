@@ -1,6 +1,6 @@
 ﻿{
-    "displayName":  "MOOD - Detection \u0026 Response Policy",
-    "name":  "MOOD - Detection \u0026 Response Policy",
+    "displayName":  "KJG-DK - Detection \u0026 Response",
+    "name":  "KJG-DK - Detection \u0026 Response",
     "description":  "",
     "platforms":  "windows10",
     "technologies":  "mdm,microsoftSense",
@@ -36,7 +36,7 @@
                                                                                                                             "@odata.type":  "#microsoft.graph.deviceManagementConfigurationSecretSettingValue",
                                                                                                                             "valueState":  "encryptedValueToken",
                                                                                                                             "settingValueTemplateReference":  null,
-                                                                                                                            "value":  "0bbcb4a7-0513-481a-bed4-2c8b7ec4227e"
+                                                                                                                            "value":  "9916c972-41ca-4e51-a1d1-6a3ad19e5bb5"
                                                                                                                         },
                                                                                                  "auditRuleInformation":  null
                                                                                              }
@@ -70,27 +70,6 @@
                                                                         }
                                              },
                          "id":  "1"
-                     },
-                     {
-                         "settingInstance":  {
-                                                 "@odata.type":  "#microsoft.graph.deviceManagementConfigurationChoiceSettingInstance",
-                                                 "settingDefinitionId":  "device_vendor_msft_windowsadvancedthreatprotection_configuration_telemetryreportingfrequency",
-                                                 "settingInstanceTemplateReference":  {
-                                                                                          "settingInstanceTemplateId":  "03de6095-07c4-4f35-be38-c1cd3bae4484"
-                                                                                      },
-                                                 "auditRuleInformation":  null,
-                                                 "choiceSettingValue":  {
-                                                                            "children":  [
-
-                                                                                         ],
-                                                                            "settingValueTemplateReference":  {
-                                                                                                                  "useTemplateDefault":  false,
-                                                                                                                  "settingValueTemplateId":  "350b0bea-b67b-43d4-9a04-c796edb961fd"
-                                                                                                              },
-                                                                            "value":  "device_vendor_msft_windowsadvancedthreatprotection_configuration_telemetryreportingfrequency_1"
-                                                                        }
-                                             },
-                         "id":  "2"
                      }
                  ]
 }
