@@ -617,34 +617,11 @@ function Import-IntuneSecurityFromExport {
     }
 
     # OS-scoped exports live under <RootPath>\<TargetOS>\...
-    # Conditional Access is tenant-scoped, not OS-scoped, so CA-only imports must not require Windows/macOS/All folders.
-    $doOsScopedImport = (
-        $includeBaseline -or
-        $includeAV -or
-        $includeDisk -or
-        $includeFirewall -or
-        $includeEPM -or
-        $includeEDR -or
-        $includeAppControl -or
-        $includeASR -or
-        $includeAccountProtection -or
-        $includeDeviceCompliance -or
-        $includeUncategorized
-    )
+    $targetOS = Get-TargetOS
+    $osRoot   = Join-Path $RootPath $targetOS
 
-    $targetOS = $null
-    $osRoot   = $null
-
-    if ($doOsScopedImport) {
-        $targetOS = Get-TargetOS
-        $osRoot   = Join-Path $RootPath $targetOS
-
-        if (-not (Test-Path -LiteralPath $osRoot)) {
-            throw "OS import path '$osRoot' does not exist. (Root='$RootPath', TargetOS='$targetOS')"
-        }
-    }
-    else {
-        Write-Host "No OS-scoped import selected. Skipping OS folder validation." -ForegroundColor DarkGray
+    if (-not (Test-Path -LiteralPath $osRoot)) {
+        throw "OS import path '$osRoot' does not exist. (Root='$RootPath', TargetOS='$targetOS')"
     }
 
     # Build list of configurationPolicy folders to import based on selection
@@ -771,24 +748,6 @@ finally {
         Remove-WorkingImportIfAppropriate -ImportedRootPath $ImportRootPath
     }
     else {
-        $isWorkingImport = $false
-
-        try {
-            if ($Global:IntuneWorkingImportRoot) {
-                $resolvedImportRoot  = [System.IO.Path]::GetFullPath($ImportRootPath).TrimEnd([char]'\', [char]'/')
-                $resolvedWorkingRoot = [System.IO.Path]::GetFullPath($Global:IntuneWorkingImportRoot).TrimEnd([char]'\', [char]'/')
-                $isWorkingImport = ($resolvedImportRoot -ieq $resolvedWorkingRoot)
-            }
-        }
-        catch {
-            $isWorkingImport = $false
-        }
-
-        if ($isWorkingImport) {
-            Write-Host "Import did not complete successfully. Working_Import is being retained for review." -ForegroundColor DarkYellow
-        }
-        else {
-            Write-Host "Import did not complete successfully. Source import folder was left unchanged." -ForegroundColor DarkYellow
-        }
+        Write-Host "Import did not complete successfully. Working_Import is being retained for review." -ForegroundColor DarkYellow
     }
 }
